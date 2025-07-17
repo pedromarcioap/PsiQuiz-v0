@@ -1,32 +1,45 @@
 "use client"
 
+import { Progress } from "@/components/ui/progress"
+
+import { Badge } from "@/components/ui/badge"
+
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
+import { Textarea } from "@/components/ui/textarea"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
-import { Brain, Zap, ArrowLeft, Settings, Target, Shuffle, CheckCircle, AlertTriangle, Lightbulb } from "lucide-react"
+import {
+  Brain,
+  Loader2,
+  XCircle,
+  Zap,
+  ArrowLeft,
+  Settings,
+  Target,
+  Shuffle,
+  CheckCircle,
+  AlertTriangle,
+  Lightbulb,
+} from "lucide-react"
 import Link from "next/link"
 import { useToast } from "@/components/ui/use-toast"
 import { useStats } from "@/hooks/useStats"
 import { aiService } from "@/lib/ai-service"
+import { generateQuestionsAI } from "@/app/actions/openrouter" // Import the new Server Action
 
 interface GeneratedQuestion {
-  id: string
   question: string
   options: string[]
   correctAnswer: number
   explanation: string
   difficulty: "Básico" | "Intermediário" | "Avançado"
   topic: string
-  distractorQuality: number
-  userFeedback?: "good" | "poor" | null
+  distractorAnalysis: string
 }
 
 interface OpenRouterModel {
@@ -44,47 +57,31 @@ interface OpenRouterModel {
 }
 
 export default function AIGeneratorPage() {
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [generationProgress, setGenerationProgress] = useState(0)
+  const [topic, setTopic] = useState("")
+  const [subtopics, setSubtopics] = useState("")
+  const [questionCount, setQuestionCount] = useState(10)
+  const [difficulty, setDifficulty] = useState("Intermediário")
+  const [distractorComplexity, setDistractorComplexity] = useState(50)
+  const [useAdversarialTraining, setUseAdversarialTraining] = useState(true)
+  const [includeWebSearch, setIncludeWebSearch] = useState(false)
+  const [systemPrompt, setSystemPrompt] = useState("")
+  const [selectedModel, setSelectedModel] = useState("openai/gpt-4o-mini") // State for selected model
   const [generatedQuestions, setGeneratedQuestions] = useState<GeneratedQuestion[]>([])
-  const { addQuizResult } = useStats() // Changed from registerQuiz to addQuizResult
-  const { toast } = useToast()
-
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [availableModels, setAvailableModels] = useState<OpenRouterModel[]>([])
   const [isLoadingModels, setIsLoadingModels] = useState(true)
-
-  const [config, setConfig] = useState({
-    topic: "",
-    subtopics: "",
-    questionCount: 10,
-    difficulty: "mixed",
-    distractorComplexity: 80,
-    useAdversarialTraining: true,
-    includeWebSearch: false,
-    selectedModel: "openai/gpt-4o-mini", // Added selectedModel to config
-    focusAreas: [] as string[],
-  })
-
-  const [systemPrompt, setSystemPrompt] =
-    useState(`Você é um especialista em Psicologia com PhD e 20 anos de experiência em ensino universitário. Crie questões de múltipla escolha sofisticadas que testem compreensão profunda, não memorização.
-
-ESTRATÉGIAS PARA DISTRATORES DE ALTA QUALIDADE:
-1. INVERSÃO DE CONCEITOS: Use conceitos verdadeiros aplicados incorretamente
-2. INFORMAÇÃO PARCIAL: Respostas tecnicamente corretas mas incompletas
-3. TERMINOLOGIA CRUZADA: Misture termos de diferentes áreas da psicologia
-4. OPINIÕES DISFARÇADAS: Apresente opiniões como se fossem fatos científicos
-5. GENERALIZAÇÕES: Transforme casos específicos em regras gerais
-6. SIMPLIFICAÇÕES: Reduza conceitos complexos de forma enganosa
-
-PADRÕES DE VERBOS (varie sempre):
-- Analise, Compare, Identifique, Determine, Explique, Avalie, Diferencie, Classifique
-
-NÍVEIS DE COMPLEXIDADE:
-- Básico: Definições e conceitos fundamentais
-- Intermediário: Aplicação e análise
-- Avançado: Síntese e avaliação crítica`)
+  const { addQuizResult } = useStats()
+  const { toast } = useToast()
 
   useEffect(() => {
+    // Load system prompt and selected model from AI service config
+    const config = aiService.getConfig()
+    if (config) {
+      setSystemPrompt(config.systemPrompt)
+      setSelectedModel(config.selectedModel)
+    }
+
     // Fetch available models
     const fetchModels = async () => {
       setIsLoadingModels(true)
@@ -92,12 +89,11 @@ NÍVEIS DE COMPLEXIDADE:
         const models = await aiService.fetchAvailableModels()
         setAvailableModels(models)
         // Set a default selected model if the current one is not in the fetched list
-        if (models.length > 0 && !models.some((m) => m.id === config.selectedModel)) {
-          setConfig((prev) => ({ ...prev, selectedModel: models[0].id }))
+        if (models.length > 0 && !models.some((m) => m.id === selectedModel)) {
+          setSelectedModel(models[0].id)
         }
       } catch (error) {
         console.error("Failed to fetch models:", error)
-        // Fallback to a default model if fetching fails
         setAvailableModels([
           {
             id: "openai/gpt-4o-mini",
@@ -105,7 +101,7 @@ NÍVEIS DE COMPLEXIDADE:
             provider: { name: "OpenAI", id: "openai" },
             pricing: { prompt: "$0.15", completion: "$0.60", unit: "1M" },
           } as OpenRouterModel,
-        ]) // Cast to OpenRouterModel
+        ])
       } finally {
         setIsLoadingModels(false)
       }
@@ -113,56 +109,55 @@ NÍVEIS DE COMPLEXIDADE:
     fetchModels()
   }, [])
 
-  const handleGenerate = async () => {
-    if (!config.topic) {
-      toast({
-        title: "Erro",
-        description: "Por favor, insira um tópico para gerar o quiz.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setIsGenerating(true)
-    setGenerationProgress(0)
+  const handleGenerateQuestions = async () => {
+    setError(null)
+    setIsLoading(true)
     setGeneratedQuestions([])
 
-    try {
-      const response = await aiService.generateQuestions({
-        topic: config.topic,
-        subtopics: config.subtopics,
-        questionCount: config.questionCount,
-        difficulty: config.difficulty,
-        distractorComplexity: config.distractorComplexity / 100,
-        useAdversarialTraining: config.useAdversarialTraining,
-        includeWebSearch: config.includeWebSearch,
-        systemPrompt: systemPrompt,
-        selectedModel: config.selectedModel, // Pass selected model
-      })
+    // No client-side check for API key here, as it's handled by the server action
+    // The server action will return an error if OPENROUTER_API_KEY is not set
 
-      if (response && response.questions) {
-        setGeneratedQuestions(response.questions as GeneratedQuestion[])
+    try {
+      const params = {
+        topic,
+        subtopics,
+        questionCount,
+        difficulty,
+        distractorComplexity,
+        useAdversarialTraining,
+        includeWebSearch,
+        systemPrompt,
+        selectedModel, // Pass the selected model
+        // Pass maxTokens and temperature from the client-side config
+        maxTokens: aiService.getConfig()?.maxTokens || 2000,
+        temperature: aiService.getConfig()?.temperature || 0.7,
+      }
+      const result = await generateQuestionsAI(params) // Call the server action
+
+      if (result.success && result.questions) {
+        setGeneratedQuestions(result.questions)
         toast({
           title: "Sucesso",
           description: "Quiz gerado com sucesso!",
         })
       } else {
+        setError(result.error || "Erro desconhecido ao gerar questões.")
         toast({
           title: "Erro",
-          description: "Falha ao gerar o quiz. Por favor, tente novamente.",
+          description: result.error || "Falha ao gerar o quiz. Por favor, tente novamente.",
           variant: "destructive",
         })
       }
-    } catch (error: any) {
-      console.error("Erro ao gerar questões:", error)
+    } catch (err) {
+      console.error("Failed to generate questions:", err)
+      setError("Falha ao conectar com o serviço de IA. Verifique sua conexão e configurações.")
       toast({
         title: "Erro",
-        description: error?.message || "Ocorreu um erro ao gerar o quiz.",
+        description: "Ocorreu um erro ao gerar o quiz. Verifique o console para mais detalhes.",
         variant: "destructive",
       })
     } finally {
-      setIsGenerating(false)
-      setGenerationProgress(100)
+      setIsLoading(false)
     }
   }
 
@@ -196,7 +191,7 @@ NÍVEIS DE COMPLEXIDADE:
     }
 
     const quizData = {
-      title: config.topic || "Quiz Gerado por IA",
+      title: topic || "Quiz Gerado por IA",
       questions: generatedQuestions.map((q) => ({
         question: q.question,
         options: q.options,
@@ -213,7 +208,7 @@ NÍVEIS DE COMPLEXIDADE:
       totalQuestions: quizData.questions.length,
       correctAnswers: 0, // Initial correct answers
       timeSpent: 0, // Initial time spent
-      difficulty: config.difficulty,
+      difficulty: difficulty,
       mode: "study",
     })
 
@@ -270,8 +265,8 @@ NÍVEIS DE COMPLEXIDADE:
                   <Input
                     id="topic"
                     placeholder="Ex: Neuropsicologia Cognitiva"
-                    value={config.topic}
-                    onChange={(e) => setConfig((prev) => ({ ...prev, topic: e.target.value }))}
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
                   />
                 </div>
 
@@ -280,17 +275,17 @@ NÍVEIS DE COMPLEXIDADE:
                   <Textarea
                     id="subtopics"
                     placeholder="Ex: memória de trabalho, atenção seletiva, funções executivas"
-                    value={config.subtopics}
-                    onChange={(e) => setConfig((prev) => ({ ...prev, subtopics: e.target.value }))}
+                    value={subtopics}
+                    onChange={(e) => setSubtopics(e.target.value)}
                     rows={3}
                   />
                 </div>
 
                 <div>
-                  <Label>Número de Questões: {config.questionCount}</Label>
+                  <Label>Número de Questões: {questionCount}</Label>
                   <Slider
-                    value={[config.questionCount]}
-                    onValueChange={([value]) => setConfig((prev) => ({ ...prev, questionCount: value }))}
+                    value={[questionCount]}
+                    onValueChange={([value]) => setQuestionCount(value)}
                     max={50}
                     min={5}
                     step={5}
@@ -300,10 +295,7 @@ NÍVEIS DE COMPLEXIDADE:
 
                 <div>
                   <Label>Nível de Dificuldade</Label>
-                  <Select
-                    value={config.difficulty}
-                    onValueChange={(value) => setConfig((prev) => ({ ...prev, difficulty: value }))}
-                  >
+                  <Select value={difficulty} onValueChange={(value) => setDifficulty(value)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -317,10 +309,10 @@ NÍVEIS DE COMPLEXIDADE:
                 </div>
 
                 <div>
-                  <Label>Complexidade dos Distratores: {config.distractorComplexity}%</Label>
+                  <Label>Complexidade dos Distratores: {distractorComplexity}%</Label>
                   <Slider
-                    value={[config.distractorComplexity]}
-                    onValueChange={([value]) => setConfig((prev) => ({ ...prev, distractorComplexity: value }))}
+                    value={[distractorComplexity]}
+                    onValueChange={([value]) => setDistractorComplexity(value)}
                     max={100}
                     min={50}
                     step={5}
@@ -332,8 +324,8 @@ NÍVEIS DE COMPLEXIDADE:
                 <div>
                   <Label>Modelo de IA</Label>
                   <Select
-                    value={config.selectedModel}
-                    onValueChange={(value) => setConfig((prev) => ({ ...prev, selectedModel: value }))}
+                    value={selectedModel}
+                    onValueChange={(value) => setSelectedModel(value)}
                     disabled={isLoadingModels}
                   >
                     <SelectTrigger>
@@ -345,7 +337,7 @@ NÍVEIS DE COMPLEXIDADE:
                           <div className="flex items-center justify-between w-full">
                             <span>{model.name}</span>
                             <Badge variant="outline" className="ml-2">
-                              {model.provider?.name ?? model.provider}
+                              {model.provider?.name || model.provider?.id || "Unknown"}
                             </Badge>
                           </div>
                         </SelectItem>
@@ -353,27 +345,21 @@ NÍVEIS DE COMPLEXIDADE:
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-gray-500 mt-1">
-                    Custo: {availableModels.find((m) => m.id === config.selectedModel)?.pricing.prompt} /{" "}
-                    {availableModels.find((m) => m.id === config.selectedModel)?.pricing.completion} por{" "}
-                    {availableModels.find((m) => m.id === config.selectedModel)?.pricing.unit} tokens
+                    Custo: {availableModels.find((m) => m.id === selectedModel)?.pricing.prompt} /{" "}
+                    {availableModels.find((m) => m.id === selectedModel)?.pricing.completion} por{" "}
+                    {availableModels.find((m) => m.id === selectedModel)?.pricing.unit} tokens
                   </p>
                 </div>
 
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <Label>Treinamento Adversarial (GAN)</Label>
-                    <Switch
-                      checked={config.useAdversarialTraining}
-                      onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, useAdversarialTraining: checked }))}
-                    />
+                    <Switch checked={useAdversarialTraining} onCheckedChange={setUseAdversarialTraining} />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <Label>Busca Web Automática</Label>
-                    <Switch
-                      checked={config.includeWebSearch}
-                      onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, includeWebSearch: checked }))}
-                    />
+                    <Switch checked={includeWebSearch} onCheckedChange={setIncludeWebSearch} />
                   </div>
                 </div>
               </CardContent>
@@ -389,28 +375,36 @@ NÍVEIS DE COMPLEXIDADE:
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   rows={8}
                   className="text-xs"
+                  placeholder="Você é um especialista em Psicologia..."
                 />
               </CardContent>
             </Card>
 
-            <Button onClick={handleGenerate} disabled={isGenerating || !config.topic} className="w-full" size="lg">
-              {isGenerating ? (
+            <Button
+              onClick={handleGenerateQuestions}
+              className="w-full"
+              disabled={isLoading || !topic || !systemPrompt}
+            >
+              {isLoading ? (
                 <>
-                  <Brain className="h-4 w-4 mr-2 animate-pulse" />
-                  Gerando...
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Gerando Questões...
                 </>
               ) : (
-                <>
-                  <Zap className="h-4 w-4 mr-2" />
-                  Gerar Quiz IA
-                </>
+                "Gerar Questões"
               )}
             </Button>
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm">
+                <XCircle className="h-4 w-4" />
+                {error}
+              </div>
+            )}
           </div>
 
           {/* Generation Progress & Results */}
           <div className="lg:col-span-2 space-y-6">
-            {isGenerating && (
+            {isLoading && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -422,10 +416,9 @@ NÍVEIS DE COMPLEXIDADE:
                   <div className="space-y-4">
                     <div className="flex justify-between text-sm">
                       <span>Analisando conteúdo e gerando questões...</span>
-                      <span>{Math.round(generationProgress)}%</span>
+                      <span>{Math.round(0)}%</span> {/* Progress is not tracked here */}
                     </div>
-                    <Progress value={generationProgress} className="h-3" />
-
+                    <Progress value={0} className="h-3" /> {/* Progress is not tracked here */}
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
@@ -470,40 +463,42 @@ NÍVEIS DE COMPLEXIDADE:
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-6">
-                    {generatedQuestions.map((question, index) => (
-                      <div key={question.id} className="border rounded-lg p-4">
+                    {generatedQuestions.map((q, index) => (
+                      <div key={index} className="border rounded-lg p-4">
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center gap-2">
                             <Badge variant="outline">#{index + 1}</Badge>
-                            <Badge className={getDifficultyColor(question.difficulty)}>{question.difficulty}</Badge>
-                            <Badge variant="outline">{question.topic}</Badge>
+                            <Badge className={getDifficultyColor(q.difficulty)}>{q.difficulty}</Badge>
+                            <Badge variant="outline">{q.topic}</Badge>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="flex items-center gap-1">
                               <Target className="h-4 w-4 text-blue-600" />
-                              <span className="text-sm font-medium">{question.distractorQuality}%</span>
+                              <span className="text-sm font-medium">{q.distractorQuality}%</span>
                             </div>
                           </div>
                         </div>
 
-                        <h3 className="font-medium mb-3">{question.question}</h3>
+                        <h3 className="font-medium mb-3">
+                          {index + 1}. {q.question}
+                        </h3>
 
                         <div className="space-y-2 mb-4">
-                          {question.options.map((option, optionIndex) => (
+                          {q.options.map((option, optIndex) => (
                             <div
-                              key={optionIndex}
+                              key={optIndex}
                               className={`p-2 rounded border ${
-                                optionIndex === question.correctAnswer
+                                optIndex === q.correctAnswer
                                   ? "bg-green-50 border-green-200"
                                   : "bg-gray-50 border-gray-200"
                               }`}
                             >
                               <div className="flex items-center gap-2">
-                                <Badge variant={optionIndex === question.correctAnswer ? "default" : "outline"}>
-                                  {String.fromCharCode(65 + optionIndex)}
+                                <Badge variant={optIndex === q.correctAnswer ? "default" : "outline"}>
+                                  {String.fromCharCode(65 + optIndex)}
                                 </Badge>
                                 <span className="text-sm">{option}</span>
-                                {optionIndex === question.correctAnswer && (
+                                {optIndex === q.correctAnswer && (
                                   <CheckCircle className="h-4 w-4 text-green-600 ml-auto" />
                                 )}
                               </div>
@@ -516,27 +511,25 @@ NÍVEIS DE COMPLEXIDADE:
                             <Lightbulb className="h-4 w-4 text-blue-600 mt-0.5" />
                             <div>
                               <p className="text-sm font-medium text-blue-800 mb-1">Explicação:</p>
-                              <p className="text-sm text-blue-700">{question.explanation}</p>
+                              <p className="text-sm text-blue-700">{q.explanation}</p>
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-center justify-between">
-                          <div className="text-xs text-gray-500">
-                            Qualidade dos distratores: {question.distractorQuality}%
-                          </div>
+                          <div className="text-xs text-gray-500">Qualidade dos distratores: {q.distractorQuality}%</div>
                           <div className="flex gap-2">
                             <Button
-                              variant={question.userFeedback === "good" ? "default" : "outline"}
+                              variant={q.userFeedback === "good" ? "default" : "outline"}
                               size="sm"
-                              onClick={() => handleFeedback(question.id, "good")}
+                              onClick={() => handleFeedback(q.id, "good")}
                             >
                               👍 Boa
                             </Button>
                             <Button
-                              variant={question.userFeedback === "poor" ? "destructive" : "outline"}
+                              variant={q.userFeedback === "poor" ? "destructive" : "outline"}
                               size="sm"
-                              onClick={() => handleFeedback(question.id, "poor")}
+                              onClick={() => handleFeedback(q.id, "poor")}
                             >
                               👎 Ruim
                             </Button>
@@ -549,7 +542,7 @@ NÍVEIS DE COMPLEXIDADE:
               </Card>
             )}
 
-            {generatedQuestions.length === 0 && !isGenerating && (
+            {generatedQuestions.length === 0 && !isLoading && !error && (
               <Card>
                 <CardContent className="p-12 text-center">
                   <Brain className="h-16 w-16 text-gray-400 mx-auto mb-4" />

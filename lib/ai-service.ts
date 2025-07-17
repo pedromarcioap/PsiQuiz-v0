@@ -1,5 +1,5 @@
 interface AIConfig {
-  openrouterKey: string
+  openrouterKeyInput?: string // For temporary input display
   selectedModel: string
   systemPrompt: string
   temperature: number
@@ -37,6 +37,8 @@ interface GenerationParams {
   includeWebSearch: boolean
   systemPrompt: string
   selectedModel: string // Added selectedModel to params
+  maxTokens: number // Added maxTokens to params for server action
+  temperature: number // Added temperature to params for server action
 }
 
 interface OpenRouterModel {
@@ -103,62 +105,14 @@ export class AIService {
     localStorage.setItem("psiquiz-conversation-history", JSON.stringify(updatedHistory))
   }
 
+  // This method now only prepares parameters and relies on a Server Action
   async generateQuestions(params: GenerationParams): Promise<{ questions: GeneratedQuestion[] } | null> {
-    if (!this.config?.openrouterKey) {
-      throw new Error("API key não configurada. Vá para Configurações > API.")
-    }
-
-    const prompt = `${params.systemPrompt}
-
-TÓPICO: ${params.topic}
-SUBTÓPICOS: ${params.subtopics}
-
-Gere ${params.questionCount} questões de múltipla escolha. Dificuldade: ${params.difficulty}.`
-
-    try {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.config.openrouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "PsiQuiz AI",
-        },
-        body: JSON.stringify({
-          model: params.selectedModel, // Use selectedModel from params
-          messages: [
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-          max_tokens: this.config.maxTokens,
-          temperature: this.config.temperature,
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`Erro na API: ${response.status}`)
-      }
-
-      const data = await response.json()
-      const aiResponse = data.choices[0]?.message?.content
-
-      if (this.config.enableLogging) {
-        this.saveToHistory(`Geração de ${params.questionCount} questões`, aiResponse, data.usage?.total_tokens || 0)
-      }
-
-      try {
-        const parsed = JSON.parse(aiResponse)
-        return parsed
-      } catch (e) {
-        console.log("Error parsing JSON response", e)
-        return null
-      }
-    } catch (error) {
-      console.error("Erro ao gerar questões:", error)
-      throw error
-    }
+    // This client-side method no longer makes the fetch call directly.
+    // It's here for type consistency if other client components still call it,
+    // but the actual API call is handled by the Server Action.
+    // The `generateQuestionsAI` Server Action will be called directly from the UI.
+    console.warn("AIService.generateQuestions should ideally be called via a Server Action.")
+    return null // Or throw an error if direct client-side call is not intended
   }
 
   async provideFeedback(questionId: string, feedback: "good" | "poor"): Promise<void> {
@@ -220,7 +174,9 @@ Gere ${params.questionCount} questões de múltipla escolha. Dificuldade: ${para
   }
 
   isConfigured(): boolean {
-    return !!this.config?.openrouterKey
+    // This now checks if the client-side config object exists,
+    // not if the API key is present on the client.
+    return !!this.config
   }
 
   getConfig(): AIConfig | null {
@@ -228,7 +184,8 @@ Gere ${params.questionCount} questões de múltipla escolha. Dificuldade: ${para
   }
 
   updateConfig(newConfig: AIConfig) {
-    this.config = newConfig
+    // Update the entire config, including openrouterKeyInput for display persistence
+    this.config = { ...this.config, ...newConfig }
   }
 }
 

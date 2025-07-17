@@ -12,9 +12,10 @@ import { Switch } from "@/components/ui/switch"
 import { ArrowLeft, Key, Brain, Zap, CheckCircle, AlertCircle, History, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { aiService } from "@/lib/ai-service"
+import { testOpenRouterConnection } from "@/app/actions/openrouter" // Import the new Server Action
 
 interface APIConfig {
-  openrouterKey: string
+  openrouterKeyInput: string // For temporary input display
   selectedModel: string
   systemPrompt: string
   temperature: number
@@ -48,7 +49,7 @@ interface OpenRouterModel {
 
 export default function APISettingsPage() {
   const [config, setConfig] = useState<APIConfig>({
-    openrouterKey: "",
+    openrouterKeyInput: "", // Initialize for input field
     selectedModel: "openai/gpt-4o-mini",
     systemPrompt: `Você é um especialista em Psicologia com PhD e 20 anos de experiência em ensino universitário. Crie questões de múltipla escolha sofisticadas que testem compreensão profunda, não memorização.
 
@@ -87,10 +88,11 @@ FORMATO DE SAÍDA (JSON):
   const [isLoadingModels, setIsLoadingModels] = useState(true)
 
   useEffect(() => {
-    // Load saved configurations
+    // Load saved configurations (including openrouterKeyInput for display)
     const savedConfig = localStorage.getItem("psiquiz-api-config")
     if (savedConfig) {
-      setConfig(JSON.parse(savedConfig))
+      const parsedConfig = JSON.parse(savedConfig)
+      setConfig((prev) => ({ ...prev, ...parsedConfig }))
     }
 
     // Load conversation history
@@ -119,73 +121,51 @@ FORMATO DE SAÍDA (JSON):
             provider: { name: "OpenAI", id: "openai" },
             pricing: { prompt: "$0.15", completion: "$0.60", unit: "1M" },
           } as OpenRouterModel,
-        ]) // Cast to OpenRouterModel
+        ])
       } finally {
         setIsLoadingModels(false)
       }
     }
     fetchModels()
-  }, []) // Empty dependency array to run only once on mount
+  }, [])
 
   const saveConfig = () => {
+    // Save all config, including openrouterKeyInput for display persistence
     localStorage.setItem("psiquiz-api-config", JSON.stringify(config))
+    aiService.updateConfig(config) // Update the singleton instance
     setIsSaved(true)
     setTimeout(() => setIsSaved(false), 2000)
   }
 
   const testConnection = async () => {
-    if (!config.openrouterKey) {
-      setConnectionStatus("error")
-      return
-    }
-
     setIsTestingConnection(true)
     setConnectionStatus("idle")
 
     try {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.openrouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "PsiQuiz AI",
-        },
-        body: JSON.stringify({
-          model: config.selectedModel,
-          messages: [
-            {
-              role: "user",
-              content: "Teste de conexão. Responda apenas 'Conexão estabelecida com sucesso!'",
-            },
-          ],
-          max_tokens: 50,
-          temperature: 0.1,
-        }),
-      })
+      // Call the server action to test the connection
+      const result = await testOpenRouterConnection(config.selectedModel)
 
-      if (response.ok) {
-        const data = await response.json()
+      if (result.success) {
         setConnectionStatus("success")
-
-        // Adicionar ao histórico
+        // Add to history (using a placeholder for tokens/cost as it's a simple test)
         const newEntry: ConversationHistory = {
           id: Date.now().toString(),
           timestamp: new Date().toISOString(),
           model: config.selectedModel,
-          prompt: "Teste de conexão",
-          response: data.choices[0]?.message?.content || "Sem resposta",
-          tokensUsed: data.usage?.total_tokens || 0,
-          cost: aiService.calculateCost(data.usage?.total_tokens || 0, config.selectedModel, availableModels),
+          prompt: "Teste de conexão (via Server Action)",
+          response: result.message,
+          tokensUsed: 0, // Placeholder
+          cost: 0, // Placeholder
         }
 
-        const updatedHistory = [newEntry, ...conversationHistory].slice(0, 100) // Manter apenas 100 entradas
+        const updatedHistory = [newEntry, ...conversationHistory].slice(0, 100)
         setConversationHistory(updatedHistory)
         localStorage.setItem("psiquiz-conversation-history", JSON.stringify(updatedHistory))
       } else {
         setConnectionStatus("error")
       }
     } catch (error) {
+      console.error("Error testing connection via Server Action:", error)
       setConnectionStatus("error")
     } finally {
       setIsTestingConnection(false)
@@ -246,23 +226,21 @@ FORMATO DE SAÍDA (JSON):
                       id="api-key"
                       type="password"
                       placeholder="sk-or-v1-..."
-                      value={config.openrouterKey}
-                      onChange={(e) => setConfig((prev) => ({ ...prev, openrouterKey: e.target.value }))}
+                      value={config.openrouterKeyInput}
+                      onChange={(e) => setConfig((prev) => ({ ...prev, openrouterKeyInput: e.target.value }))}
+                      // Removed 'disabled' to allow user to type, but it's not used for direct calls
                     />
-                    <Button
-                      onClick={testConnection}
-                      disabled={isTestingConnection || !config.openrouterKey}
-                      variant="outline"
-                    >
-                      {isTestingConnection ? "Testando..." : "Testar"}
+                    <Button onClick={testConnection} disabled={isTestingConnection} variant="outline">
+                      {isTestingConnection ? "Testando..." : "Testar Conexão do Servidor"}
                     </Button>
                   </div>
                   <div className="flex items-center gap-2 mt-2">
                     {getStatusIcon()}
                     <span className="text-sm text-gray-600">
-                      {connectionStatus === "success" && "Conexão estabelecida com sucesso!"}
-                      {connectionStatus === "error" && "Erro na conexão. Verifique sua chave API."}
-                      {connectionStatus === "idle" && "Insira sua chave API do OpenRouter"}
+                      {connectionStatus === "success" && "Conexão do servidor estabelecida com sucesso!"}
+                      {connectionStatus === "error" &&
+                        "Erro na conexão do servidor. Verifique a variável de ambiente OPENROUTER_API_KEY."}
+                      {connectionStatus === "idle" && "Configure a variável de ambiente OPENROUTER_API_KEY no Vercel."}
                     </span>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
@@ -275,6 +253,7 @@ FORMATO DE SAÍDA (JSON):
                     >
                       openrouter.ai/keys
                     </a>
+                    . **Defina-a como uma variável de ambiente `OPENROUTER_API_KEY` no seu projeto Vercel.**
                   </p>
                 </div>
 
@@ -294,7 +273,7 @@ FORMATO DE SAÍDA (JSON):
                           <div className="flex items-center justify-between w-full">
                             <span>{model.name}</span>
                             <Badge variant="outline" className="ml-2">
-                              {model.provider.name}
+                              {model.provider?.name || model.provider?.id || "Unknown"}
                             </Badge>
                           </div>
                         </SelectItem>
@@ -480,7 +459,7 @@ FORMATO DE SAÍDA (JSON):
                       <div className="flex justify-between items-center">
                         <span className="font-medium">{model.name}</span>
                         <Badge variant="outline" className="text-xs">
-                          {model.provider.name}
+                          {model.provider?.name || model.provider?.id || "Unknown"}
                         </Badge>
                       </div>
                       <p className="text-xs text-gray-600 mt-1">
