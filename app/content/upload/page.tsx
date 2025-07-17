@@ -1,257 +1,253 @@
 "use client"
 
-export const dynamic = "force-dynamic"
+export const dynamic = "force-dynamic" // ⬅ keeps this page out of static rendering
+export const prerender = false // ⬅ extra safety for Next 15+
 
-import { useState, useCallback } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useCallback, useState } from "react"
+import Link from "next/link"
+import { ArrowLeft, AlertCircle, Brain, CheckCircle, FileText, Globe, Link2, Upload, Settings, Zap } from "lucide-react"
+
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Progress } from "@/components/ui/progress"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
-import { Upload, FileText, Link2, Globe, Brain, ArrowLeft, CheckCircle, AlertCircle, Settings, Zap } from "lucide-react"
-import Link from "next/link"
 import { useToast } from "@/components/ui/use-toast"
 import { aiService } from "@/services/aiService"
 import { useStats } from "@/hooks/useStats"
 
+type ContentType = "pdf" | "text" | "url" | "web-search"
+type StatusType = "uploading" | "processing" | "completed" | "error"
+
 interface ContentItem {
   id: string
   name: string
-  type: "pdf" | "text" | "url" | "web-search"
+  type: ContentType
   size?: string
-  status: "uploading" | "processing" | "completed" | "error"
+  status: StatusType
   progress: number
   questionsGenerated?: number
 }
 
+/* ────────────────────────────── */
+/* 🔧  Small pure helper functions */
+/* ────────────────────────────── */
+function getTypeIcon(type: ContentType) {
+  switch (type) {
+    case "pdf":
+      return <FileText className="h-4 w-4 text-red-600" />
+    case "url":
+      return <Link2 className="h-4 w-4 text-blue-600" />
+    case "web-search":
+      return <Globe className="h-4 w-4 text-green-600" />
+    default:
+      return <FileText className="h-4 w-4 text-gray-600" />
+  }
+}
+
+function getStatusIcon(status: StatusType) {
+  if (status === "completed") return <CheckCircle className="h-5 w-5 text-green-600" />
+  if (status === "error") return <AlertCircle className="h-5 w-5 text-red-600" />
+  return <Brain className="h-5 w-5 text-blue-600 animate-pulse" />
+}
+
 export default function UploadContentPage() {
+  /* -------------------------------------- */
+  /* 🗃️  State & hooks                      */
+  /* -------------------------------------- */
   const [contentItems, setContentItems] = useState<ContentItem[]>([])
-  const [systemPrompt, setSystemPrompt] =
-    useState(`Você é um especialista em Psicologia criando questões de múltipla escolha para estudantes universitários. 
+  const [systemPrompt, setSystemPrompt] = useState(
+    `Você é um especialista em Psicologia criando questões de múltipla escolha para estudantes universitários. 
 
 INSTRUÇÕES PARA GERAÇÃO DE QUESTÕES:
 1. Crie questões que testem compreensão conceitual, não memorização
-2. Use distratores plausíveis baseados em:
-   - Conceitos relacionados mas incorretos
+2. Use distratores plausíveis:
+   - Conceitos relacionados, mas incorretos
    - Inversões de conceitos verdadeiros
-   - Informações parciais ou incompletas
-   - Terminologia de outras áreas da psicologia
+   - Informações parciais
+   - Terminologia de outras áreas
    - Generalizações excessivas
-   
-3. Varie os verbos nas perguntas: analise, compare, identifique, explique, determine
-4. Inclua questões de diferentes níveis: básico, intermediário, avançado
-5. Forneça explicações detalhadas para cada resposta correta
+3. Varie verbos (analise, compare, identifique…)
+4. Misture níveis (básico, intermediário, avançado)
+5. Traga explicações detalhadas
 
-FORMATO DE SAÍDA:
-- Pergunta clara e específica
-- 4 alternativas (A, B, C, D)
-- Indicação da resposta correta
-- Explicação detalhada
-- Nível de dificuldade
-- Tópico/área da psicologia`)
+FORMATO:
+- pergunta
+- 4 alternativas (A-D)
+- índice da correta
+- explicação
+- dificuldade
+- tópico`,
+  )
 
   const [webSearchQuery, setWebSearchQuery] = useState("")
   const [urlInput, setUrlInput] = useState("")
-  const [isProcessing, setIsProcessing] = useState(false)
-  const { toast } = useToast()
-  const { incrementContentsProcessed, incrementQuestionsGenerated } = useStats()
   const [numQuestions, setNumQuestions] = useState("10")
   const [difficulty, setDifficulty] = useState("mixed")
   const [distractorQuality, setDistractorQuality] = useState("high")
 
-  const handleFileUpload = useCallback(
-    async (files: FileList | null) => {
-      if (!files) return
+  const { toast } = useToast()
+  const { incrementContentsProcessed, incrementQuestionsGenerated } = useStats()
 
-      Array.from(files).forEach(async (file) => {
-        const newItem: ContentItem = {
-          id: Math.random().toString(36).substr(2, 9),
-          name: file.name,
-          type: file.type === "application/pdf" ? "pdf" : "text",
-          size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-          status: "uploading",
-          progress: 0,
-        }
-
-        setContentItems((prev) => [...prev, newItem])
-
-        try {
-          const fileContent = await file.text()
-          processContent(newItem, fileContent)
-        } catch (error) {
-          console.error("Error reading file:", error)
-          setContentItems((prev) => prev.map((item) => (item.id === newItem.id ? { ...item, status: "error" } : item)))
-          toast({
-            title: "Erro ao ler o arquivo",
-            description: "Não foi possível ler o conteúdo do arquivo.",
-            variant: "destructive",
-          })
-        }
-      })
-    },
-    [processContent, toast],
-  )
-
-  const handleUrlSubmit = useCallback(async () => {
-    if (!urlInput.trim()) return
-
-    const newItem: ContentItem = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: urlInput,
-      type: "url",
-      status: "uploading",
-      progress: 0,
-    }
-
-    setContentItems((prev) => [...prev, newItem])
-
-    try {
-      const response = await fetch(`/api/extract-url?url=${encodeURIComponent(urlInput)}`)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      const data = await response.json()
-      if (data.text) {
-        processContent(newItem, data.text)
-      } else {
-        throw new Error("No text extracted from URL")
-      }
-    } catch (error: any) {
-      console.error("Error processing URL:", error)
-      setContentItems((prev) => prev.map((item) => (item.id === newItem.id ? { ...item, status: "error" } : item)))
-      toast({
-        title: "Erro ao processar a URL",
-        description: error.message || "Não foi possível extrair o conteúdo da URL.",
-        variant: "destructive",
-      })
-    }
-    setUrlInput("")
-  }, [processContent, toast, urlInput])
-
-  const handleWebSearch = useCallback(async () => {
-    if (!webSearchQuery.trim()) return
-
-    const newItem: ContentItem = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: `Busca: "${webSearchQuery}"`,
-      type: "web-search",
-      status: "uploading",
-      progress: 0,
-    }
-
-    setContentItems((prev) => [...prev, newItem])
-
-    try {
-      const response = await fetch(`/api/web-search?query=${encodeURIComponent(webSearchQuery)}`)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      const data = await response.json()
-      if (data.results && data.results.length > 0) {
-        // Concatenate the text from all search results
-        const searchText = data.results.map((result: any) => result.text).join("\n")
-        processContent(newItem, searchText)
-      } else {
-        throw new Error("No results found for the web search query")
-      }
-    } catch (error: any) {
-      console.error("Error processing web search:", error)
-      setContentItems((prev) => prev.map((item) => (item.id === newItem.id ? { ...item, status: "error" } : item)))
-      toast({
-        title: "Erro ao processar a busca na internet",
-        description: error.message || "Não foi possível obter resultados da busca.",
-        variant: "destructive",
-      })
-    }
-    setWebSearchQuery("")
-  }, [processContent, toast, webSearchQuery])
-
+  /* ------------------------------------------------------------------ */
+  /* 1️⃣  processContent – MUST be declared first for TDZ safety         */
+  /* ------------------------------------------------------------------ */
   const processContent = useCallback(
-    async (item: ContentItem, content: string) => {
+    async (item: ContentItem, rawText: string) => {
       setContentItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "processing", progress: 0 } : i)))
 
       try {
-        const result = await aiService.generateQuestions(
-          content,
+        const questions = await aiService.generateQuestions(
+          rawText,
           systemPrompt,
-          Number.parseInt(numQuestions),
+          Number.parseInt(numQuestions, 10),
           difficulty,
           distractorQuality,
         )
 
-        if (result && result.length > 0) {
-          setContentItems((prev) =>
-            prev.map((i) =>
-              i.id === item.id ? { ...i, status: "completed", progress: 100, questionsGenerated: result.length } : i,
-            ),
-          )
-          incrementContentsProcessed()
-          incrementQuestionsGenerated(result.length)
-          toast({
-            title: "Conteúdo processado com sucesso!",
-            description: `${result.length} questões geradas.`,
-          })
-        } else {
-          throw new Error("No questions were generated.")
-        }
-      } catch (error: any) {
-        console.error("Error generating questions:", error)
+        if (!questions?.length) throw new Error("A IA não gerou questões.")
+
+        setContentItems((prev) =>
+          prev.map((i) =>
+            i.id === item.id ? { ...i, status: "completed", progress: 100, questionsGenerated: questions.length } : i,
+          ),
+        )
+        incrementContentsProcessed()
+        incrementQuestionsGenerated(questions.length)
+        toast({ title: "Sucesso!", description: `${questions.length} questões geradas.` })
+      } catch (err: any) {
+        console.error(err)
         setContentItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
         toast({
           title: "Erro ao gerar questões",
-          description: error.message || "Ocorreu um erro ao gerar as questões.",
+          description: err?.message ?? "Falha desconhecida.",
           variant: "destructive",
         })
       }
     },
     [
       systemPrompt,
-      toast,
-      incrementContentsProcessed,
-      incrementQuestionsGenerated,
       numQuestions,
       difficulty,
       distractorQuality,
+      toast,
+      incrementContentsProcessed,
+      incrementQuestionsGenerated,
     ],
   )
 
-  const getStatusIcon = (status: ContentItem["status"]) => {
-    switch (status) {
-      case "completed":
-        return <CheckCircle className="h-5 w-5 text-green-600" />
-      case "error":
-        return <AlertCircle className="h-5 w-5 text-red-600" />
-      default:
-        return <Brain className="h-5 w-5 text-blue-600 animate-pulse" />
-    }
-  }
+  /* ------------------------------------------------------------------ */
+  /* 2️⃣  helpers that DEPEND on processContent                          */
+  /* ------------------------------------------------------------------ */
+  const handleFileUpload = useCallback(
+    (files: FileList | null) => {
+      if (!files) return
+      for (const file of Array.from(files)) {
+        const item: ContentItem = {
+          id: crypto.randomUUID(),
+          name: file.name,
+          type: file.type === "application/pdf" ? "pdf" : "text",
+          size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+          status: "uploading",
+          progress: 0,
+        }
+        setContentItems((p) => [...p, item])
 
-  const getTypeIcon = (type: ContentItem["type"]) => {
-    switch (type) {
-      case "pdf":
-        return <FileText className="h-4 w-4 text-red-600" />
-      case "url":
-        return <Link2 className="h-4 w-4 text-blue-600" />
-      case "web-search":
-        return <Globe className="h-4 w-4 text-green-600" />
-      default:
-        return <FileText className="h-4 w-4 text-gray-600" />
-    }
-  }
+        file
+          .text()
+          .then((text) => processContent(item, text))
+          .catch(() => {
+            setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
+            toast({
+              title: "Erro ao ler arquivo",
+              description: "Certifique-se de que o arquivo não esteja corrompido.",
+              variant: "destructive",
+            })
+          })
+      }
+    },
+    [processContent, toast],
+  )
 
+  const handleUrlSubmit = useCallback(async () => {
+    if (!urlInput.trim()) return
+    const item: ContentItem = {
+      id: crypto.randomUUID(),
+      name: urlInput,
+      type: "url",
+      status: "uploading",
+      progress: 0,
+    }
+    setContentItems((p) => [...p, item])
+
+    try {
+      const res = await fetch(`/api/extract-url?url=${encodeURIComponent(urlInput)}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const { text } = await res.json()
+      if (!text) throw new Error("Nada foi extraído da URL.")
+      processContent(item, text)
+    } catch (err: any) {
+      console.error(err)
+      setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
+      toast({
+        title: "Erro na URL",
+        description: err?.message ?? "Falha ao extrair conteúdo.",
+        variant: "destructive",
+      })
+    }
+    setUrlInput("")
+  }, [urlInput, processContent, toast])
+
+  const handleWebSearch = useCallback(async () => {
+    if (!webSearchQuery.trim()) return
+    const item: ContentItem = {
+      id: crypto.randomUUID(),
+      name: `Busca: "${webSearchQuery}"`,
+      type: "web-search",
+      status: "uploading",
+      progress: 0,
+    }
+    setContentItems((p) => [...p, item])
+
+    try {
+      const res = await fetch(`/api/web-search?query=${encodeURIComponent(webSearchQuery)}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const { results } = await res.json()
+      if (!results?.length) throw new Error("Nenhum resultado encontrado.")
+      processContent(
+        item,
+        results
+          .map((r: { text: string }) => r.text)
+          .filter(Boolean)
+          .join("\n"),
+      )
+    } catch (err: any) {
+      console.error(err)
+      setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
+      toast({
+        title: "Erro na busca",
+        description: err?.message ?? "Falha ao buscar conteúdo.",
+        variant: "destructive",
+      })
+    }
+    setWebSearchQuery("")
+  }, [webSearchQuery, processContent, toast])
+
+  /* -------------------------------------- */
+  /* 📄  JSX                               */
+  /* -------------------------------------- */
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-6xl mx-auto">
+      <div className="mx-auto max-w-6xl">
         {/* Header */}
         <div className="mb-6">
-          <div className="flex items-center gap-3 mb-4">
+          <div className="mb-4 flex items-center gap-3">
             <Link href="/">
               <Button variant="ghost" size="sm">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Voltar
+                <ArrowLeft className="mr-2 h-4 w-4" /> Voltar
               </Button>
             </Link>
             <Upload className="h-6 w-6 text-indigo-600" />
@@ -259,20 +255,19 @@ FORMATO DE SAÍDA:
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Upload Methods */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* File Upload */}
+        <div className="grid gap-6 lg:grid-cols-3">
+          {/* LEFT – Upload methods */}
+          <div className="space-y-6 lg:col-span-2">
+            {/* File upload */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5" />
-                  Upload de Arquivos
+                  <FileText className="h-5 w-5" /> Upload de Arquivos
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div
-                  className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-indigo-400 transition-colors cursor-pointer"
+                  className="cursor-pointer rounded-lg border-2 border-dashed border-gray-300 p-8 text-center transition-colors hover:border-indigo-400"
                   onDrop={(e) => {
                     e.preventDefault()
                     handleFileUpload(e.dataTransfer.files)
@@ -280,16 +275,16 @@ FORMATO DE SAÍDA:
                   onDragOver={(e) => e.preventDefault()}
                   onClick={() => document.getElementById("file-input")?.click()}
                 >
-                  <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-lg font-medium text-gray-700 mb-2">
+                  <Upload className="mx-auto mb-4 h-12 w-12 text-gray-400" />
+                  <p className="mb-2 text-lg font-medium text-gray-700">
                     Arraste arquivos aqui ou clique para selecionar
                   </p>
-                  <p className="text-sm text-gray-500">Suporta PDF, TXT, DOCX (máx. 50MB cada)</p>
+                  <p className="text-sm text-gray-500">PDF, TXT ou DOCX (máx. 50 MB)</p>
                   <input
                     id="file-input"
                     type="file"
-                    multiple
                     accept=".pdf,.txt,.docx"
+                    multiple
                     className="hidden"
                     onChange={(e) => handleFileUpload(e.target.files)}
                   />
@@ -297,36 +292,33 @@ FORMATO DE SAÍDA:
               </CardContent>
             </Card>
 
-            {/* URL Input */}
+            {/* URL input */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Link2 className="h-5 w-5" />
-                  Adicionar Link
+                  <Link2 className="h-5 w-5" /> Adicionar Link
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="flex gap-2">
                   <Input
-                    placeholder="https://exemplo.com/artigo-psicologia"
+                    placeholder="https://exemplo.com/artigo..."
                     value={urlInput}
                     onChange={(e) => setUrlInput(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleUrlSubmit()}
+                    onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
                   />
                   <Button onClick={handleUrlSubmit} disabled={!urlInput.trim()}>
                     Adicionar
                   </Button>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">Artigos, papers, páginas web com conteúdo de Psicologia</p>
               </CardContent>
             </Card>
 
-            {/* Web Search */}
+            {/* Web search */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Globe className="h-5 w-5" />
-                  Busca na Internet
+                  <Globe className="h-5 w-5" /> Busca na Internet
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -335,20 +327,16 @@ FORMATO DE SAÍDA:
                     placeholder="Ex: neuroplasticidade psicologia cognitiva 2024"
                     value={webSearchQuery}
                     onChange={(e) => setWebSearchQuery(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleWebSearch()}
+                    onKeyDown={(e) => e.key === "Enter" && handleWebSearch()}
                   />
                   <Button onClick={handleWebSearch} disabled={!webSearchQuery.trim()}>
-                    <Globe className="h-4 w-4 mr-2" />
-                    Buscar
+                    <Globe className="mr-2 h-4 w-4" /> Buscar
                   </Button>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Busca conteúdo atualizado e contextualizado automaticamente
-                </p>
               </CardContent>
             </Card>
 
-            {/* Content Processing Status */}
+            {/* Processing status */}
             {contentItems.length > 0 && (
               <Card>
                 <CardHeader>
@@ -357,11 +345,11 @@ FORMATO DE SAÍDA:
                 <CardContent>
                   <div className="space-y-4">
                     {contentItems.map((item) => (
-                      <div key={item.id} className="p-4 border rounded-lg">
-                        <div className="flex items-center justify-between mb-2">
+                      <div key={item.id} className="rounded-lg border p-4">
+                        <div className="mb-2 flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             {getTypeIcon(item.type)}
-                            <span className="font-medium truncate max-w-md">{item.name}</span>
+                            <span className="max-w-md truncate font-medium">{item.name}</span>
                             {item.size && <Badge variant="outline">{item.size}</Badge>}
                           </div>
                           {getStatusIcon(item.status)}
@@ -370,13 +358,14 @@ FORMATO DE SAÍDA:
                         <div className="space-y-2">
                           <div className="flex justify-between text-sm">
                             <span>
-                              {item.status === "uploading"
-                                ? "Enviando..."
-                                : item.status === "processing"
-                                  ? "Processando com IA..."
-                                  : item.status === "completed"
-                                    ? "Concluído"
-                                    : "Erro"}
+                              {
+                                {
+                                  uploading: "Enviando...",
+                                  processing: "Processando com IA...",
+                                  completed: "Concluído",
+                                  error: "Erro",
+                                }[item.status]
+                              }
                             </span>
                             <span>{Math.round(item.progress)}%</span>
                           </div>
@@ -397,137 +386,111 @@ FORMATO DE SAÍDA:
             )}
           </div>
 
-          {/* System Prompt Configuration */}
+          {/* RIGHT – Prompt & IA settings */}
           <div className="space-y-6">
+            {/* System prompt */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Settings className="h-5 w-5" />
-                  System Prompt
+                  <Settings className="h-5 w-5" /> System Prompt
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  <div>
-                    <Label htmlFor="system-prompt">Instruções para IA</Label>
-                    <Textarea
-                      id="system-prompt"
-                      value={systemPrompt}
-                      onChange={(e) => setSystemPrompt(e.target.value)}
-                      rows={12}
-                      className="text-sm"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Templates Predefinidos</Label>
-                    <div className="space-y-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full justify-start text-xs bg-transparent"
-                        onClick={() => setSystemPrompt("Template para questões básicas de Psicologia...")}
-                      >
-                        Psicologia Básica
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full justify-start text-xs bg-transparent"
-                        onClick={() => setSystemPrompt("Template para neuropsicologia avançada...")}
-                      >
-                        Neuropsicologia
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full justify-start text-xs bg-transparent"
-                        onClick={() => setSystemPrompt("Template para psicologia clínica...")}
-                      >
-                        Psicologia Clínica
-                      </Button>
-                    </div>
-                  </div>
+                  <Label htmlFor="systemPrompt">Instruções para IA</Label>
+                  <Textarea
+                    id="systemPrompt"
+                    rows={12}
+                    className="text-sm"
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                  />
                 </div>
               </CardContent>
             </Card>
 
+            {/* AI params */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Zap className="h-5 w-5" />
-                  Configurações IA
+                  <Zap className="h-5 w-5" /> Configurações IA
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div>
-                    <Label>Número de Questões por Conteúdo</Label>
-                    <Select defaultValue={numQuestions} onValueChange={setNumQuestions}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="5">5 questões</SelectItem>
-                        <SelectItem value="10">10 questões</SelectItem>
-                        <SelectItem value="15">15 questões</SelectItem>
-                        <SelectItem value="20">20 questões</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+              <CardContent className="space-y-4">
+                <div>
+                  <Label>Número de Questões</Label>
+                  <Select value={numQuestions} onValueChange={setNumQuestions}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["5", "10", "15", "20"].map((v) => (
+                        <SelectItem key={v} value={v}>
+                          {v} questões
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                  <div>
-                    <Label>Nível de Dificuldade</Label>
-                    <Select defaultValue={difficulty} onValueChange={setDifficulty}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="basic">Básico</SelectItem>
-                        <SelectItem value="intermediate">Intermediário</SelectItem>
-                        <SelectItem value="advanced">Avançado</SelectItem>
-                        <SelectItem value="mixed">Misto</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div>
+                  <Label>Dificuldade</Label>
+                  <Select value={difficulty} onValueChange={setDifficulty}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[
+                        ["basic", "Básico"],
+                        ["intermediate", "Intermediário"],
+                        ["advanced", "Avançado"],
+                        ["mixed", "Misto"],
+                      ].map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                  <div>
-                    <Label>Qualidade dos Distratores</Label>
-                    <Select defaultValue={distractorQuality} onValueChange={setDistractorQuality}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="standard">Padrão</SelectItem>
-                        <SelectItem value="high">Alta</SelectItem>
-                        <SelectItem value="expert">Especialista</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div>
+                  <Label>Qualidade dos Distratores</Label>
+                  <Select value={distractorQuality} onValueChange={setDistractorQuality}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[
+                        ["standard", "Padrão"],
+                        ["high", "Alta"],
+                        ["expert", "Especialista"],
+                      ].map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </CardContent>
             </Card>
 
+            {/* Quick stats */}
             <Card>
               <CardHeader>
                 <CardTitle>Estatísticas</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <span className="text-sm">Conteúdos Processados</span>
-                    <span className="font-semibold">{contentItems.filter((i) => i.status === "completed").length}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm">Questões Geradas</span>
-                    <span className="font-semibold">
-                      {contentItems.reduce((acc, item) => acc + (item.questionsGenerated || 0), 0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm">Taxa de Sucesso</span>
-                    <span className="font-semibold text-green-600">98%</span>
-                  </div>
+              <CardContent className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="text-sm">Conteúdos Processados</span>
+                  <span className="font-semibold">{contentItems.filter((i) => i.status === "completed").length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm">Questões Geradas</span>
+                  <span className="font-semibold">
+                    {contentItems.reduce((sum, i) => sum + (i.questionsGenerated ?? 0), 0)}
+                  </span>
                 </div>
               </CardContent>
             </Card>
