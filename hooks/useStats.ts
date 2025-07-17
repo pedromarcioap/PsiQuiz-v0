@@ -13,6 +13,18 @@ type Stats = {
   questionsGenerated: number
 }
 
+type QuizResult = {
+  id: string
+  title: string
+  score: number
+  totalQuestions: number
+  correctAnswers: number
+  date: string
+  timeSpent: number
+  difficulty: string
+  mode: "study" | "test"
+}
+
 const STORAGE_KEY = "psiquiz_stats"
 
 function readFromStorage(): Stats {
@@ -27,6 +39,16 @@ function readFromStorage(): Stats {
 
 export function useStats() {
   const [stats, setStats] = useState<Stats>(() => readFromStorage())
+
+  const [quizResults, setQuizResults] = useState<QuizResult[]>(() => {
+    if (typeof window === "undefined") return []
+    try {
+      const raw = window.localStorage.getItem("psiquiz_quiz_results")
+      return raw ? (JSON.parse(raw) as QuizResult[]) : []
+    } catch {
+      return []
+    }
+  })
 
   /* ------------------------------------------------------------------ */
   /*  Sync with localStorage – runs only in the browser                 */
@@ -50,5 +72,37 @@ export function useStats() {
     setStats((s) => ({ ...s, questionsGenerated: s.questionsGenerated + qty }))
   }, [])
 
-  return { ...stats, incrementContentsProcessed, incrementQuestionsGenerated }
+  const addQuizResult = useCallback(
+    (result: Omit<QuizResult, "id" | "date">) => {
+      const full: QuizResult = {
+        ...result,
+        id: Date.now().toString(),
+        date: new Date().toISOString(),
+      }
+
+      const updated = [full, ...quizResults].slice(0, 50)
+      setQuizResults(updated)
+
+      try {
+        window.localStorage.setItem("psiquiz_quiz_results", JSON.stringify(updated))
+      } catch {
+        /* ignore quota errors */
+      }
+
+      // quick aggregate stats update
+      setStats((s) => ({
+        ...s,
+        questionsGenerated: s.questionsGenerated + full.totalQuestions,
+      }))
+    },
+    [quizResults],
+  )
+
+  return {
+    ...stats,
+    incrementContentsProcessed,
+    incrementQuestionsGenerated,
+    addQuizResult,
+    quizResults,
+  }
 }
