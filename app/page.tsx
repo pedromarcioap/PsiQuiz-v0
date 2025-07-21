@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSession, signIn, signOut } from "next-auth/react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -8,6 +9,7 @@ import { Brain, Clock, BookOpen, TrendingUp, Upload, FileText, Zap, Settings } f
 import Link from "next/link"
 
 export default function HomePage() {
+  const { data: session } = useSession()
   const [stats, setStats] = useState({
     totalContent: 0,
     generatedQuizzes: 0,
@@ -31,15 +33,19 @@ export default function HomePage() {
 
   useEffect(() => {
     // Load stats from localStorage on component mount
-    const storedStats = localStorage.getItem("psiQuizStats")
-    if (storedStats) {
-      setStats(JSON.parse(storedStats))
+    if (session?.user?.email) {
+      const storedStats = localStorage.getItem(`psiQuizStats-${session.user.email}`)
+      if (storedStats) {
+        setStats(JSON.parse(storedStats))
+      }
     }
-  }, [])
+  }, [session])
 
-  const updateStats = (newStats) => {
+  const updateStats = (newStats: any) => {
     setStats(newStats)
-    localStorage.setItem("psiQuizStats", JSON.stringify(newStats))
+    if (session?.user?.email) {
+      localStorage.setItem(`psiQuizStats-${session.user.email}`, JSON.stringify(newStats))
+    }
   }
 
   return (
@@ -59,12 +65,17 @@ export default function HomePage() {
                 <p className="text-gray-600">Plataforma Inteligente para Estudos em Psicologia</p>
               </div>
             </div>
-            <Link href="/settings/api">
-              <Button variant="outline" size="sm">
-                <Settings className="h-4 w-4 mr-2" />
-                Configurações
-              </Button>
-            </Link>
+            <div>
+              {session ? (
+                <Button onClick={() => signOut()} variant="outline" size="sm">
+                  Sair
+                </Button>
+              ) : (
+                <Button onClick={() => signIn()} variant="outline" size="sm">
+                  Login
+                </Button>
+              )}
+            </div>
           </div>
         </div>
 
