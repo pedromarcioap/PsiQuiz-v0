@@ -1,5 +1,7 @@
+import { generateQuestionsAI, testOpenRouterConnection, analyzePerformanceAI } from "../app/actions/openrouter"
+
 interface AIConfig {
-  openrouterKeyInput?: string // For temporary input display
+  openrouterKeyInput?: string // Para exibição temporária da entrada
   selectedModel: string
   systemPrompt: string
   temperature: number
@@ -14,7 +16,7 @@ interface GeneratedQuestion {
   explanation: string
   difficulty: "Básico" | "Intermediário" | "Avançado"
   topic: string
-  distractorAnalysis: string
+  distractorAnalysis: string // Mantendo esta versão mais descritiva
 }
 
 interface ConversationHistory {
@@ -25,20 +27,6 @@ interface ConversationHistory {
   response: string
   tokensUsed: number
   cost: number
-}
-
-interface GenerationParams {
-  topic: string
-  subtopics: string
-  questionCount: number
-  difficulty: string
-  distractorComplexity: number
-  useAdversarialTraining: boolean
-  includeWebSearch: boolean
-  systemPrompt: string
-  selectedModel: string // Added selectedModel to params
-  maxTokens: number // Added maxTokens to params for server action
-  temperature: number // Added temperature to params for server action
 }
 
 interface OpenRouterModel {
@@ -87,7 +75,7 @@ export class AIService {
     return cost
   }
 
-  private saveToHistory(prompt: string, response: string, tokensUsed: number) {
+  private saveToHistory(prompt: string, response: string, tokensUsed: number, cost: number) {
     if (!this.config?.enableLogging) return
 
     const entry: ConversationHistory = {
@@ -97,7 +85,7 @@ export class AIService {
       prompt,
       response,
       tokensUsed,
-      cost: this.calculateCost(tokensUsed, this.config.selectedModel, this.modelsCache || []), // Use cached models for cost
+      cost, // Usar o custo calculado e passado
     }
 
     const existingHistory = JSON.parse(localStorage.getItem("psiquiz-conversation-history") || "[]")
@@ -105,14 +93,41 @@ export class AIService {
     localStorage.setItem("psiquiz-conversation-history", JSON.stringify(updatedHistory))
   }
 
-  // This method now only prepares parameters and relies on a Server Action
-  async generateQuestions(params: GenerationParams): Promise<{ questions: GeneratedQuestion[] } | null> {
-    // This client-side method no longer makes the fetch call directly.
-    // It's here for type consistency if other client components still call it,
-    // but the actual API call is handled by the Server Action.
-    // The `generateQuestionsAI` Server Action will be called directly from the UI.
-    console.warn("AIService.generateQuestions should ideally be called via a Server Action.")
-    return null // Or throw an error if direct client-side call is not intended
+  // Este método agora chama a Server Action
+  async generateQuestions(params: Parameters<typeof generateQuestionsAI>[0]): Promise<{ questions: GeneratedQuestion[] } | null> {
+    if (!this.config?.selectedModel || !this.config?.maxTokens || !this.config?.temperature) {
+      throw new Error("Configurações de IA incompletas. Verifique o modelo, maxTokens e temperatura.")
+    }
+
+    const fullParams = {
+      ...params,
+      selectedModel: this.config.selectedModel,
+      maxTokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      systemPrompt: this.config.systemPrompt, // Garantir que o systemPrompt da config seja usado
+    }
+
+    try {
+      const result = await generateQuestionsAI(fullParams)
+
+      if (result.success && result.questions) {
+        // Calcular o custo usando os modelos disponíveis e tokens usados
+        const cost = this.calculateCost(result.tokensUsed || 0, this.config.selectedModel, this.modelsCache || [])
+        this.saveToHistory(
+          `Geração de ${params.questionCount} questões sobre ${params.topic}`,
+          JSON.stringify(result.questions),
+          result.tokensUsed || 0,
+          cost
+        )
+        return { questions: result.questions }
+      } else {
+        console.error("Erro ao gerar questões via Server Action:", result.error)
+        throw new Error(result.error || "Erro desconhecido ao gerar questões.")
+      }
+    } catch (error: any) {
+      console.error("Erro na chamada da Server Action generateQuestionsAI:", error)
+      throw error
+    }
   }
 
   async provideFeedback(questionId: string, feedback: "good" | "poor"): Promise<void> {
@@ -121,9 +136,12 @@ export class AIService {
   }
 
   async getInsights(timeRange = "30d", topic = "all"): Promise<any[]> {
+    // Este método pode ser atualizado para chamar analyzePerformanceAI Server Action
     console.warn(
-      `[AIService] getInsights() is not yet implemented – returning a blank array (timeRange=${timeRange}, topic=${topic})`,
+      `[AIService] getInsights() is not yet fully implemented – returning a blank array (timeRange=${timeRange}, topic=${topic})`,
     )
+    // Exemplo de como chamar a Server Action para insights, se necessário
+    // const result = await analyzePerformanceAI([], []);
     return []
   }
 
@@ -139,9 +157,7 @@ export class AIService {
       }
       const data = await response.json()
       this.modelsCache = data.data.map((model: any) => {
-        // `owned_by` can be a string or object; make it uniform
         const providerId = typeof model.owned_by === "string" ? model.owned_by : (model.owned_by?.id ?? "unknown")
-
         const providerName = typeof model.owned_by === "string" ? model.owned_by : (model.owned_by?.name ?? providerId)
 
         return {
@@ -155,28 +171,17 @@ export class AIService {
           },
         } as OpenRouterModel
       })
-      return this.modelsCache
+      return this.modelsCache as OpenRouterModel[] // Asserção de tipo, pois já verificamos que não é null
     } catch (error) {
       console.error("Error fetching OpenRouter models:", error)
+      this.modelsCache = null; // Resetar cache em caso de erro
       throw error
     }
   }
 
-  private parseTextResponse(text: string): GeneratedQuestion[] {
-    // Implementação básica para extrair questões de texto não-JSON
-    // Esta é uma implementação simplificada - pode ser melhorada
-    const questions: GeneratedQuestion[] = []
-
-    // Lógica para parsear texto e extrair questões
-    // Por enquanto, retorna array vazio se não conseguir parsear JSON
-
-    return questions
-  }
-
   isConfigured(): boolean {
-    // This now checks if the client-side config object exists,
-    // not if the API key is present on the client.
-    return !!this.config
+    // Verifica se o objeto de configuração existe e se o modelo selecionado está presente
+    return !!this.config?.selectedModel
   }
 
   getConfig(): AIConfig | null {
@@ -184,8 +189,11 @@ export class AIService {
   }
 
   updateConfig(newConfig: AIConfig) {
-    // Update the entire config, including openrouterKeyInput for display persistence
     this.config = { ...this.config, ...newConfig }
+    // Salvar no localStorage para persistência no cliente
+    if (typeof window !== "undefined") {
+      localStorage.setItem("psiquiz-api-config", JSON.stringify(this.config))
+    }
   }
 }
 
