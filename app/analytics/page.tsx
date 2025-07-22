@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useStats } from "@/hooks/useStats"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -10,14 +11,36 @@ import Link from "next/link"
 
 export default function AnalyticsPage() {
   const [timeRange, setTimeRange] = useState("7d")
+  const { stats } = useStats()
+  const [insights, setInsights] = useState<string[]>([])
+  const [loadingInsights, setLoadingInsights] = useState(true)
 
+  useEffect(() => {
+    const fetchInsights = async () => {
+      try {
+        const response = await fetch("/api/insights", { method: "POST" })
+        if (response.ok) {
+          const data = await response.json()
+          setInsights(data.recommendations || [])
+        }
+      } catch (error) {
+        console.error("Failed to fetch insights:", error)
+      } finally {
+        setLoadingInsights(false)
+      }
+    }
+
+    if (stats) {
+      fetchInsights()
+    }
+  }, [stats])
+
+  if (!stats) {
+    return <p>Carregando estatísticas...</p>
+  }
+
+  // Mock data for sections not yet implemented with real data
   const performanceData = {
-    overall: {
-      totalQuizzes: 15,
-      averageScore: 78,
-      totalTime: 120,
-      improvement: 12,
-    },
     byTopic: [
       { topic: "Psicologia Cognitiva", score: 85, quizzes: 5, trend: "up", difficulty: "Intermediário" },
       { topic: "Teorias da Personalidade", score: 72, quizzes: 3, trend: "down", difficulty: "Avançado" },
@@ -28,12 +51,6 @@ export default function AnalyticsPage() {
       { topic: "Teorias Psicanalíticas", score: 45, priority: "Alta" },
       { topic: "Neuropsicologia", score: 52, priority: "Média" },
       { topic: "Métodos de Pesquisa", score: 58, priority: "Média" },
-    ],
-    recommendations: [
-      "Revisar conceitos fundamentais de Teorias Psicanalíticas",
-      "Praticar mais questões sobre Neuropsicologia",
-      "Focar em questões de nível avançado",
-      "Aumentar tempo de estudo em 15 minutos por sessão",
     ],
   }
 
@@ -74,7 +91,7 @@ export default function AnalyticsPage() {
               <div className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-blue-600" />
                 <div>
-                  <p className="text-2xl font-bold">{performanceData.overall.totalQuizzes}</p>
+                  <p className="text-2xl font-bold">{stats.quizzesTaken}</p>
                   <p className="text-sm text-gray-600">Quizzes Realizados</p>
                 </div>
               </div>
@@ -86,11 +103,11 @@ export default function AnalyticsPage() {
               <div className="flex items-center gap-2">
                 <Target className="h-5 w-5 text-green-600" />
                 <div>
-                  <p className="text-2xl font-bold">{performanceData.overall.averageScore}%</p>
+                  <p className="text-2xl font-bold">{stats.averageScore.toFixed(1)}%</p>
                   <p className="text-sm text-gray-600">Média Geral</p>
                   <div className="flex items-center gap-1 mt-1">
                     <TrendingUp className="h-3 w-3 text-green-600" />
-                    <span className="text-xs text-green-600">+{performanceData.overall.improvement}%</span>
+                    <span className="text-xs text-green-600">+0%</span>
                   </div>
                 </div>
               </div>
@@ -102,7 +119,7 @@ export default function AnalyticsPage() {
               <div className="flex items-center gap-2">
                 <Clock className="h-5 w-5 text-orange-600" />
                 <div>
-                  <p className="text-2xl font-bold">{performanceData.overall.totalTime}h</p>
+                  <p className="text-2xl font-bold">{(stats.totalTimeSpent / 3600).toFixed(1)}h</p>
                   <p className="text-sm text-gray-600">Tempo Total</p>
                 </div>
               </div>
@@ -114,8 +131,8 @@ export default function AnalyticsPage() {
               <div className="flex items-center gap-2">
                 <Brain className="h-5 w-5 text-purple-600" />
                 <div>
-                  <p className="text-2xl font-bold">{performanceData.byTopic.length}</p>
-                  <p className="text-sm text-gray-600">Tópicos Estudados</p>
+                  <p className="text-2xl font-bold">{stats.contentsProcessed}</p>
+                  <p className="text-sm text-gray-600">Conteúdos Processados</p>
                 </div>
               </div>
             </CardContent>
@@ -200,14 +217,18 @@ export default function AnalyticsPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {performanceData.recommendations.map((recommendation, index) => (
-                    <div key={index} className="flex items-start gap-3 p-3 bg-purple-50 rounded-lg">
-                      <div className="w-6 h-6 bg-purple-600 text-white rounded-full flex items-center justify-center text-sm font-bold">
-                        {index + 1}
+                  {loadingInsights ? (
+                    <p>Gerando recomendações...</p>
+                  ) : (
+                    insights.map((recommendation, index) => (
+                      <div key={index} className="flex items-start gap-3 p-3 bg-purple-50 rounded-lg">
+                        <div className="w-6 h-6 bg-purple-600 text-white rounded-full flex items-center justify-center text-sm font-bold">
+                          {index + 1}
+                        </div>
+                        <p className="text-purple-800 text-sm">{recommendation}</p>
                       </div>
-                      <p className="text-purple-800 text-sm">{recommendation}</p>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>

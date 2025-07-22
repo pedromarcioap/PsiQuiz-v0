@@ -7,102 +7,90 @@
  */
 
 import { useCallback, useEffect, useState } from "react"
+import { useSession } from "next-auth/react"
 
 type Stats = {
   contentsProcessed: number
   questionsGenerated: number
-}
-
-type QuizResult = {
-  id: string
-  title: string
-  score: number
-  totalQuestions: number
-  correctAnswers: number
-  date: string
-  timeSpent: number
-  difficulty: string
-  mode: "study" | "test"
-}
-
-const STORAGE_KEY = "psiquiz_stats"
-
-function readFromStorage(): Stats {
-  if (typeof window === "undefined") return { contentsProcessed: 0, questionsGenerated: 0 }
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as Stats) : { contentsProcessed: 0, questionsGenerated: 0 }
-  } catch {
-    return { contentsProcessed: 0, questionsGenerated: 0 }
-  }
+  quizzesTaken: number
+  averageScore: number
+  totalTimeSpent: number
 }
 
 export function useStats() {
-  const [stats, setStats] = useState<Stats>(() => readFromStorage())
+  const { data: session } = useSession()
+  const [stats, setStats] = useState<Stats | null>(null)
 
-  const [quizResults, setQuizResults] = useState<QuizResult[]>(() => {
-    if (typeof window === "undefined") return []
+  const fetchStats = useCallback(async () => {
+    if (!session) return
     try {
-      const raw = window.localStorage.getItem("psiquiz_quiz_results")
-      return raw ? (JSON.parse(raw) as QuizResult[]) : []
-    } catch {
-      return []
+      const response = await fetch("/api/stats")
+      if (response.ok) {
+        const data = await response.json()
+        setStats(data)
+      }
+    } catch (error) {
+      console.error("Failed to fetch stats:", error)
     }
-  })
+  }, [session])
 
-  /* ------------------------------------------------------------------ */
-  /*  Sync with localStorage – runs only in the browser                 */
-  /* ------------------------------------------------------------------ */
   useEffect(() => {
+    fetchStats()
+  }, [fetchStats])
+
+  const updateStats = async (newStats: Partial<Stats>) => {
+    if (!session) return
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stats))
-    } catch {
-      /* ignore quota / disabled storage errors */
+      const response = await fetch("/api/stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newStats),
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setStats(data)
+      }
+    } catch (error) {
+      console.error("Failed to update stats:", error)
     }
+  }
+
+  const incrementContentsProcessed = useCallback(() => {
+    if (!stats) return
+    updateStats({ contentsProcessed: stats.contentsProcessed + 1 })
   }, [stats])
 
-  /* ------------------------------------------------------------------ */
-  /*  Increment helpers                                                 */
-  /* ------------------------------------------------------------------ */
-  const incrementContentsProcessed = useCallback(() => {
-    setStats((s) => ({ ...s, contentsProcessed: s.contentsProcessed + 1 }))
-  }, [])
-
-  const incrementQuestionsGenerated = useCallback((qty: number) => {
-    setStats((s) => ({ ...s, questionsGenerated: s.questionsGenerated + qty }))
-  }, [])
+  const incrementQuestionsGenerated = useCallback(
+    (qty: number) => {
+      if (!stats) return
+      updateStats({ questionsGenerated: stats.questionsGenerated + qty })
+    },
+    [stats],
+  )
 
   const addQuizResult = useCallback(
-    (result: Omit<QuizResult, "id" | "date">) => {
-      const full: QuizResult = {
-        ...result,
-        id: Date.now().toString(),
-        date: new Date().toISOString(),
-      }
+    (result: { score: number; timeSpent: number; totalQuestions: number }) => {
+      if (!stats) return
 
-      const updated = [full, ...quizResults].slice(0, 50)
-      setQuizResults(updated)
+      const newQuizzesTaken = stats.quizzesTaken + 1
+      const newTotalTimeSpent = stats.totalTimeSpent + result.timeSpent
+      const newAverageScore =
+        (stats.averageScore * stats.quizzesTaken + result.score) / newQuizzesTaken
 
-      try {
-        window.localStorage.setItem("psiquiz_quiz_results", JSON.stringify(updated))
-      } catch {
-        /* ignore quota errors */
-      }
-
-      // quick aggregate stats update
-      setStats((s) => ({
-        ...s,
-        questionsGenerated: s.questionsGenerated + full.totalQuestions,
-      }))
+      updateStats({
+        quizzesTaken: newQuizzesTaken,
+        totalTimeSpent: newTotalTimeSpent,
+        averageScore: newAverageScore,
+        questionsGenerated: stats.questionsGenerated + result.totalQuestions,
+      })
     },
-    [quizResults],
+    [stats],
   )
 
   return {
-    ...stats,
+    stats,
     incrementContentsProcessed,
     incrementQuestionsGenerated,
     addQuizResult,
-    quizResults,
   }
 }
