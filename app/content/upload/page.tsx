@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
-import { aiService } from "@/services/aiService"
+import { aiService } from "@/lib/ai-service"
 import { useStats } from "@/hooks/useStats"
 
 type ContentType = "pdf" | "text" | "url" | "web-search"
@@ -100,24 +100,24 @@ FORMATO:
       setContentItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "processing", progress: 0 } : i)))
 
       try {
-        const questions = await aiService.generateQuestions(
+        const result = await aiService.generateQuestions({
           rawText,
           systemPrompt,
-          Number.parseInt(numQuestions, 10),
+          questionCount: Number.parseInt(numQuestions, 10),
           difficulty,
           distractorQuality,
-        )
+        })
 
-        if (!questions?.length) throw new Error("A IA não gerou questões.")
+        if (!result?.questions?.length) throw new Error("A IA não gerou questões.")
 
         setContentItems((prev) =>
           prev.map((i) =>
-            i.id === item.id ? { ...i, status: "completed", progress: 100, questionsGenerated: questions.length } : i,
+            i.id === item.id ? { ...i, status: "completed", progress: 100, questionsGenerated: result.questions.length } : i,
           ),
         )
         incrementContentsProcessed()
-        incrementQuestionsGenerated(questions.length)
-        toast({ title: "Sucesso!", description: `${questions.length} questões geradas.` })
+        incrementQuestionsGenerated(result.questions.length)
+        toast({ title: "Sucesso!", description: `${result.questions.length} questões geradas.` })
       } catch (err: any) {
         console.error(err)
         setContentItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))

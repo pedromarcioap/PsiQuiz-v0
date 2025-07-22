@@ -1,17 +1,14 @@
 "use server"
 
 interface GenerationParams {
-  topic: string
-  subtopics: string
+  rawText: string // Adicionado para o conteúdo a ser processado
+  systemPrompt: string
   questionCount: number
   difficulty: string
-  distractorComplexity: number
-  useAdversarialTraining: boolean
-  includeWebSearch: boolean
-  systemPrompt: string
+  distractorQuality: string // Adicionado para a qualidade dos distratores
   selectedModel: string
-  maxTokens: number // Added maxTokens to params
-  temperature: number // Added temperature to params
+  maxTokens: number
+  temperature: number
 }
 
 interface GeneratedQuestion {
@@ -97,10 +94,11 @@ export async function generateQuestionsAI(params: GenerationParams) {
   const prompt = `${params.systemPrompt}
 
 CONTEÚDO PARA ANÁLISE:
-TÓPICO: ${params.topic}
-SUBTÓPICOS: ${params.subtopics}
+${params.rawText}
 
-Gere ${params.questionCount} questões de múltipla escolha baseadas no conteúdo acima. Varie os níveis de dificuldade e use diferentes estratégias de distratores.
+Gere ${params.questionCount} questões de múltipla escolha baseadas no conteúdo acima.
+DIFICULDADE: ${params.difficulty}
+QUALIDADE DOS DISTRATORES: ${params.distractorQuality}
 
 FORMATO DE SAÍDA (JSON):
 {
