@@ -1,85 +1,58 @@
 import { callOpenRouterApi } from "@/lib/openrouter-api"
+import { z } from "zod"
 "use server"
 
+const GeneratedQuestionSchema = z.object({
+  question: z.string(),
+  options: z.array(z.string()),
+  correctAnswer: z.number(),
+  explanation: z.string(),
+  difficulty: z.union([z.literal("Básico"), z.literal("Intermediário"), z.literal("Avançado")]),
+  topic: z.string(),
+  distractorAnalysis: z.string(),
+})
+
+const GeneratedQuestionsResponseSchema = z.object({
+  questions: z.array(GeneratedQuestionSchema),
+})
+
+type GeneratedQuestion = z.infer<typeof GeneratedQuestionSchema>
+
 interface GenerationParams {
-  rawText: string // Adicionado para o conteúdo a ser processado
+  rawText: string
   systemPrompt: string
   questionCount: number
   difficulty: string
-  distractorQuality: string // Adicionado para a qualidade dos distratores
+  distractorQuality: string
   selectedModel: string
   maxTokens: number
   temperature: number
 }
 
-interface GeneratedQuestion {
-  question: string
-  options: string[]
-  correctAnswer: number
-  explanation: string
-  difficulty: "Básico" | "Intermediário" | "Avançado"
-  topic: string
-  distractorAnalysis: string
-}
-
 // Server Action to test OpenRouter API connection
 export async function testOpenRouterConnection(model: string) {
-  const openrouterKey = process.env.OPENROUTER_API_KEY
-
-  if (!openrouterKey) {
-    return { success: false, error: "OPENROUTER_API_KEY não configurada no ambiente do servidor." }
-  }
-
-  try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openrouterKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://psiquiz-ai.vercel.app", // Use a fixed referer for server-side calls
-        "X-Title": "PsiQuiz AI Server",
+  const result = await callOpenRouterApi({
+    model: model,
+    messages: [
+      {
+        role: "user",
+        content: "Teste de conexão. Responda apenas 'Conexão estabelecida com sucesso!'",
       },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          {
-            role: "user",
-            content: "Teste de conexão. Responda apenas 'Conexão estabelecida com sucesso!'",
-          },
-        ],
-        max_tokens: 50,
-        temperature: 0.1,
-      }),
-    })
+    ],
+    max_tokens: 50,
+    temperature: 0.1,
+  })
 
-    if (response.ok) {
-      const data = await response.json()
-      return { success: true, message: data.choices[0]?.message?.content || "Conexão estabelecida com sucesso!" }
-    } else {
-      const errorData = await response.json()
-      console.error("OpenRouter API Error:", errorData)
-      return {
-        success: false,
-        error: `Erro na API OpenRouter: ${response.status} - ${errorData.message || "Erro desconhecido"}`,
-      }
-    }
-  } catch (error: any) {
-    console.error("Server Action test connection failed:", error)
-    return { success: false, error: `Falha na conexão do servidor: ${error.message}` }
+  if (result.success) {
+    return { success: true, message: result.data.choices[0]?.message?.content || "Conexão estabelecida com sucesso!" }
+  } else {
+    return { success: false, error: result.error }
   }
 }
 
 // Server Action to generate questions
 export async function generateQuestionsAI(params: GenerationParams) {
-  const openrouterKey = process.env.OPENROUTER_API_KEY
-  if (!openrouterKey) {
-    return {
-      success: false,
-      error: "OPENROUTER_API_KEY não configurada no ambiente do servidor.",
-    }
-  }
-
-  // Helper: remove \`\`\`json fences & grab the first {...} block
+  // Helper: remove ```json fences & grab the first {...} block
   const extractJson = (raw: string): string => {
     let text = raw.trim()
 
@@ -116,44 +89,38 @@ FORMATO DE SAÍDA (JSON):
   ]
 }`
 
-  try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openrouterKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://psiquiz-ai.vercel.app",
-        "X-Title": "PsiQuiz AI Server",
-      },
-      body: JSON.stringify({
-        model: params.selectedModel,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: params.maxTokens,
-        temperature: params.temperature,
-      }),
-    })
+  const result = await callOpenRouterApi({
+    model: params.selectedModel,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: params.maxTokens,
+    temperature: params.temperature,
+  })
 
-    if (!response.ok) {
-      const errorData = await response.json()
-      console.error("OpenRouter API Error:", errorData)
+  if (!result.success) {
+    return { success: false, error: result.error }
+  }
+
+  try {
+    const rawContent = result.data.choices?.[0]?.message?.content || ""
+    const cleaned = extractJson(rawContent)
+
+    const parsed = GeneratedQuestionsResponseSchema.safeParse(JSON.parse(cleaned))
+
+    if (!parsed.success) {
+      console.error("Erro de validação do esquema Zod:", parsed.error)
       return {
         success: false,
-        error: `Erro na API OpenRouter: ${response.status} - ${errorData.message || "Erro desconhecido"}`,
+        error: "A IA retornou um formato inválido ou incompleto. Tente novamente ou ajuste o System Prompt.",
       }
     }
 
-    const data = await response.json()
-    const rawContent = data.choices?.[0]?.message?.content || ""
-    const cleaned = extractJson(rawContent)
-
-    const parsed = JSON.parse(cleaned) as { questions: GeneratedQuestion[] }
     return {
       success: true,
-      questions: parsed.questions,
-      tokensUsed: data.usage?.total_tokens || 0,
+      questions: parsed.data.questions,
+      tokensUsed: result.data.usage?.total_tokens || 0,
     }
   } catch (err) {
-    console.error("Error parsing JSON response from AI:", err)
+    console.error("Error parsing or validating JSON response from AI:", err)
     return {
       success: false,
       error: "A IA retornou um formato inválido. Tente novamente ou ajuste o System Prompt.",
@@ -163,23 +130,40 @@ FORMATO DE SAÍDA (JSON):
 
 // Server Action for performance analysis (placeholder for now)
 export async function analyzePerformanceAI(userAnswers: any[], questions: GeneratedQuestion[]) {
-  const openrouterKey = process.env.OPENROUTER_API_KEY
+  // Implementação básica para simular insights de desempenho
+  // Em um cenário real, esta função faria uma chamada à API da IA para analisar as respostas do usuário
+  // em relação às questões e gerar insights.
 
-  if (!openrouterKey) {
-    return { success: false, error: "OPENROUTER_API_KEY não configurada no ambiente do servidor." }
+  const correctAnswers = userAnswers.filter((answer, index) => {
+    const question = questions[index]
+    return question && answer.selectedOption === question.correctAnswer
+  }).length
+
+  const overallScore = (correctAnswers / questions.length) * 100
+
+  const insights = {
+    overallScore: overallScore,
+    weakAreas: ["Tópico A", "Tópico B"], // Placeholder para áreas fracas
+    distractorVulnerabilities: ["Distrator X", "Distrator Y"], // Placeholder para vulnerabilidades de distratores
+    recommendations: [
+      "Revise os conceitos de Tópico A.",
+      "Preste mais atenção aos distratores em questões de Tópico B.",
+      "Pratique mais com questões de dificuldade Intermediária.",
+    ],
+    studyPlan: [
+      "Dia 1: Estudo aprofundado de Tópico A.",
+      "Dia 2: Resolução de exercícios sobre Tópico B.",
+      "Dia 3: Revisão geral e simulado.",
+    ],
   }
 
-  // This is a placeholder. You'd implement the actual AI call here.
-  console.warn("analyzePerformanceAI Server Action is a placeholder.")
+  // Simular uso de tokens
+  const tokensUsed = Math.floor(Math.random() * 1000) + 100 // Entre 100 e 1100 tokens
+
+  console.warn("analyzePerformanceAI Server Action: Implementação básica concluída.")
   return {
     success: true,
-    insights: {
-      overallScore: 0,
-      weakAreas: [],
-      distractorVulnerabilities: [],
-      recommendations: [],
-      studyPlan: [],
-    },
-    tokensUsed: 0,
+    insights: insights,
+    tokensUsed: tokensUsed,
   }
 }

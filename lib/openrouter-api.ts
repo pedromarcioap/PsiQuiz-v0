@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { env } from "./env"
 
 interface OpenRouterApiCallParams {
   model: string
@@ -13,11 +14,7 @@ export async function callOpenRouterApi(
   referer: string = "https://psiquiz-ai.vercel.app",
   title: string = "PsiQuiz AI Server"
 ) {
-  const openrouterKey = process.env.OPENROUTER_API_KEY
-
-  if (!openrouterKey) {
-    return { success: false, error: "OPENROUTER_API_KEY não configurada no ambiente do servidor." }
-  }
+  const openrouterKey = env.OPENROUTER_API_KEY
 
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
