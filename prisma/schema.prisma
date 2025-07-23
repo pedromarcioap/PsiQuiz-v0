@@ -46,6 +46,8 @@ model User {
   accounts      Account[]
   sessions      Session[]
   statistics    UserStatistics?
+  contents      Content[]
+  quizzes       Quiz[]
 }
 
 model VerificationToken {
@@ -64,7 +66,48 @@ model UserStatistics {
   questionsGenerated Int    @default(0)
   quizzesTaken       Int    @default(0)
   averageScore       Float  @default(0)
-  totalTimeSpent     Int    @default(0)
+  totalTimeSpent     Int    @default(0) // in seconds
 
   @@index([userId])
+}
+
+model Content {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  source    String? // URL or file name
+  type      String // "pdf", "text", "url"
+  createdAt DateTime @default(now())
+  quizzes   Quiz[]
+
+  @@index([userId])
+}
+
+model Quiz {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contentId   String?
+  content     Content?  @relation(fields: [contentId], references: [id])
+  title       String
+  createdAt   DateTime  @default(now())
+  questions   Question[]
+  score       Float?
+  timeTaken   Int? // in seconds
+  completedAt DateTime?
+
+  @@index([userId])
+}
+
+model Question {
+  id       String   @id @default(cuid())
+  quizId   String
+  quiz     Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  text     String
+  options  Json // { options: ["A", "B", "C"], correct: "A" }
+  userAnswer String?
+  isCorrect  Boolean?
+
+  @@index([quizId])
 }

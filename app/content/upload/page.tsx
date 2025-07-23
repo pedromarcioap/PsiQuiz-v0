@@ -96,7 +96,7 @@ FORMATO:
   /* 1️⃣  processContent – MUST be declared first for TDZ safety         */
   /* ------------------------------------------------------------------ */
   const processContent = useCallback(
-    async (item: ContentItem, rawText: string) => {
+    async (item: ContentItem, rawText: string, contentId: string) => {
       setContentItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "processing", progress: 0 } : i)))
 
       try {
@@ -109,6 +109,16 @@ FORMATO:
         )
 
         if (!questions?.length) throw new Error("A IA não gerou questões.")
+
+        await fetch("/api/quiz", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: `Quiz for ${item.name}`,
+            contentId,
+            questions,
+          }),
+        })
 
         setContentItems((prev) =>
           prev.map((i) =>
@@ -143,7 +153,7 @@ FORMATO:
   /* 2️⃣  helpers that DEPEND on processContent                          */
   /* ------------------------------------------------------------------ */
   const handleFileUpload = useCallback(
-    (files: FileList | null) => {
+    async (files: FileList | null) => {
       if (!files) return
       for (const file of Array.from(files)) {
         const item: ContentItem = {
@@ -156,17 +166,33 @@ FORMATO:
         }
         setContentItems((p) => [...p, item])
 
-        file
-          .text()
-          .then((text) => processContent(item, text))
-          .catch(() => {
-            setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
-            toast({
-              title: "Erro ao ler arquivo",
-              description: "Certifique-se de que o arquivo não esteja corrompido.",
-              variant: "destructive",
-            })
+        try {
+          const response = await fetch("/api/content", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: file.name,
+              type: item.type,
+              source: file.name,
+            }),
           })
+
+          if (!response.ok) {
+            throw new Error("Failed to create content entry")
+          }
+
+          const newContent = await response.json()
+          const text = await file.text()
+          processContent(item, text, newContent.id)
+        } catch (error) {
+          console.error("Error during file upload process:", error)
+          setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
+          toast({
+            title: "Erro ao processar arquivo",
+            description: "Não foi possível salvar a entrada de conteúdo.",
+            variant: "destructive",
+          })
+        }
       }
     },
     [processContent, toast],
@@ -184,11 +210,26 @@ FORMATO:
     setContentItems((p) => [...p, item])
 
     try {
+      const response = await fetch("/api/content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: urlInput,
+          type: "url",
+          source: urlInput,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to create content entry")
+      }
+      const newContent = await response.json()
+
       const res = await fetch(`/api/extract-url?url=${encodeURIComponent(urlInput)}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const { text } = await res.json()
       if (!text) throw new Error("Nada foi extraído da URL.")
-      processContent(item, text)
+      processContent(item, text, newContent.id)
     } catch (err: any) {
       console.error(err)
       setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
@@ -213,6 +254,21 @@ FORMATO:
     setContentItems((p) => [...p, item])
 
     try {
+      const response = await fetch("/api/content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Busca: "${webSearchQuery}"`,
+          type: "web-search",
+          source: webSearchQuery,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to create content entry")
+      }
+      const newContent = await response.json()
+
       const res = await fetch(`/api/web-search?query=${encodeURIComponent(webSearchQuery)}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const { results } = await res.json()
@@ -223,6 +279,7 @@ FORMATO:
           .map((r: { text: string }) => r.text)
           .filter(Boolean)
           .join("\n"),
+        newContent.id,
       )
     } catch (err: any) {
       console.error(err)
