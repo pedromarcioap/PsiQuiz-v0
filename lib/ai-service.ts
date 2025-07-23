@@ -114,7 +114,7 @@ export class AIService {
         // Calcular o custo usando os modelos disponíveis e tokens usados
         const cost = this.calculateCost(result.tokensUsed || 0, this.config.selectedModel, this.modelsCache || [])
         this.saveToHistory(
-          `Geração de ${params.questionCount} questões sobre ${params.topic}`,
+          `Geração de ${params.questionCount} questões a partir do conteúdo fornecido`,
           JSON.stringify(result.questions),
           result.tokensUsed || 0,
           cost

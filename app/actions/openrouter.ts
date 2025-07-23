@@ -1,3 +1,4 @@
+import { callOpenRouterApi } from "@/lib/openrouter-api"
 "use server"
 
 interface GenerationParams {
