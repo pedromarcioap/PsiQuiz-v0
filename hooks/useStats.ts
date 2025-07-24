@@ -1,96 +1,69 @@
-"use client"
-
-/**
- * Client-only stats helper.
- * 1. Avoids touching `localStorage` on the server.
- * 2. Exposes increment helpers used across the app.
- */
-
-import { useCallback, useEffect, useState } from "react"
-import { useSession } from "next-auth/react"
+import { useState, useEffect } from "react"
+import { signOut, useSession } from "next-auth/react"
 
 type Stats = {
-  contentsProcessed: number
-  questionsGenerated: number
-  quizzesTaken: number
+  totalContent: number
+  generatedQuizzes: number
   averageScore: number
-  totalTimeSpent: number
+  studyTime: number
+  aiAccuracy: number
 }
 
-export function useStats() {
+export default function useStats() {
   const { data: session } = useSession()
-  const [stats, setStats] = useState<Stats | null>(null)
-
-  const fetchStats = useCallback(async () => {
-    if (!session) return
-    try {
-      const response = await fetch("/api/stats")
-      if (response.ok) {
-        const data = await response.json()
-        setStats(data)
-      }
-    } catch (error) {
-      console.error("Failed to fetch stats:", error)
-    }
-  }, [session])
+  const [stats, setStats] = useState<Stats>({
+    totalContent: 0,
+    generatedQuizzes: 0,
+    averageScore: 0,
+    studyTime: 0,
+    aiAccuracy: 0,
+  })
 
   useEffect(() => {
-    fetchStats()
-  }, [fetchStats])
-
-  const updateStats = async (newStats: Partial<Stats>) => {
-    if (!session) return
-    try {
-      const response = await fetch("/api/stats", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newStats),
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setStats(data)
+    const fetchStats = async () => {
+      if (session?.user?.id) {
+        try {
+          const response = await fetch("/api/stats")
+          if (response.ok) {
+            const data = await response.json()
+            setStats({
+              totalContent: data.contentsProcessed,
+              generatedQuizzes: data.questionsGenerated,
+              averageScore: data.averageScore,
+              studyTime: data.totalTimeSpent,
+              aiAccuracy: 0, // This will be addressed later
+            })
+          }
+        } catch (error) {
+          console.error("Failed to fetch stats:", error)
+        }
       }
-    } catch (error) {
-      console.error("Failed to update stats:", error)
+    }
+
+    fetchStats()
+  }, [session])
+
+  const updateStats = async (newStats: Stats) => {
+    setStats(newStats)
+    if (session?.user?.id) {
+      try {
+        await fetch("/api/stats", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contentsProcessed: newStats.totalContent,
+            questionsGenerated: newStats.generatedQuizzes,
+            averageScore: newStats.averageScore,
+            totalTimeSpent: newStats.studyTime,
+          }),
+        })
+      } catch (error) {
+        console.error("Failed to update stats:", error)
+      }
     }
   }
 
-  const incrementContentsProcessed = useCallback(() => {
-    if (!stats) return
-    updateStats({ contentsProcessed: stats.contentsProcessed + 1 })
-  }, [stats])
-
-  const incrementQuestionsGenerated = useCallback(
-    (qty: number) => {
-      if (!stats) return
-      updateStats({ questionsGenerated: stats.questionsGenerated + qty })
-    },
-    [stats],
-  )
-
-  const addQuizResult = useCallback(
-    (result: { score: number; timeSpent: number; totalQuestions: number }) => {
-      if (!stats) return
-
-      const newQuizzesTaken = stats.quizzesTaken + 1
-      const newTotalTimeSpent = stats.totalTimeSpent + result.timeSpent
-      const newAverageScore =
-        (stats.averageScore * stats.quizzesTaken + result.score) / newQuizzesTaken
-
-      updateStats({
-        quizzesTaken: newQuizzesTaken,
-        totalTimeSpent: newTotalTimeSpent,
-        averageScore: newAverageScore,
-        questionsGenerated: stats.questionsGenerated + result.totalQuestions,
-      })
-    },
-    [stats],
-  )
-
-  return {
-    stats,
-    incrementContentsProcessed,
-    incrementQuestionsGenerated,
-    addQuizResult,
-  }
+  return { stats, updateStats }
 }
