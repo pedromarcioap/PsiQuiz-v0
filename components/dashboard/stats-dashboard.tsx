@@ -1,5 +1,6 @@
 "use client"
 
+import { memo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { FileText, Brain, TrendingUp, Clock, Zap } from "lucide-react"
 
@@ -78,3 +79,5 @@ export function StatsDashboard({ stats }: StatsDashboardProps) {
     </div>
   )
 }
+
+export const MemoizedStatsDashboard = memo(StatsDashboard)

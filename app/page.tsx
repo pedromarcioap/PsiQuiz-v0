@@ -7,11 +7,26 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Brain, Clock, BookOpen, TrendingUp, Upload, FileText, Zap, Settings } from "lucide-react"
 import Link from "next/link"
-import { StatsDashboard } from "@/components/dashboard/stats-dashboard"
+import { MemoizedStatsDashboard as StatsDashboard } from "@/components/dashboard/stats-dashboard"
+import { QuickActions } from "@/components/dashboard/quick-actions"
+import { MemoizedRecentActivity as RecentActivity } from "@/components/dashboard/recent-activity"
+import { MemoizedAIInsights as AIInsights } from "@/components/dashboard/ai-insights"
+import { MemoizedWeeklyPerformance as WeeklyPerformance } from "@/components/dashboard/weekly-performance"
+import { MemoizedContentLibrary as ContentLibrary } from "@/components/dashboard/content-library"
+import { useToast } from "@/components/ui/use-toast"
+
+type Stats = {
+  totalContent: number
+  generatedQuizzes: number
+  averageScore: number
+  studyTime: number
+  aiAccuracy: number
+}
 
 export default function HomePage() {
   const { data: session } = useSession()
-  const [stats, setStats] = useState({
+  const { toast } = useToast()
+  const [stats, setStats] = useState<Stats>({
     totalContent: 0,
     generatedQuizzes: 0,
     averageScore: 0,
@@ -25,6 +40,20 @@ export default function HomePage() {
     { id: 3, type: "content", title: "Artigo sobre Psicologia Social", questions: 12, date: "2024-01-13" },
   ])
 
+  const weeklyPerformance = [
+    { topic: "Psicologia Cognitiva", score: 92 },
+    { topic: "Teorias da Personalidade", score: 76 },
+    { topic: "Psicopatologia", score: 84 },
+    { topic: "Neuropsicologia", score: 68 },
+  ]
+
+  const contentLibrary = [
+    { name: "Psicologia Cognitiva", icon: "📚", count: 5 },
+    { name: "Neuropsicologia", icon: "🧠", count: 3 },
+    { name: "Psicologia Social", icon: "👥", count: 4 },
+    { name: "Métodos de Pesquisa", icon: "🔬", count: 2 },
+  ]
+
   const [aiInsights, setAiInsights] = useState([
     "Desempenho melhorou 15% em Psicologia Cognitiva",
     "Recomenda-se revisar conceitos de Neuroplasticidade",
@@ -32,6 +61,9 @@ export default function HomePage() {
     "Sugestão: Mais prática em questões de nível avançado",
   ])
 
+  /**
+   * Fetches the user's stats from the database when the session is loaded.
+   */
   useEffect(() => {
     const fetchStats = async () => {
       if (session?.user?.id) {
@@ -46,9 +78,16 @@ export default function HomePage() {
               studyTime: data.totalTimeSpent,
               aiAccuracy: 0, // This will be addressed later
             })
+          } else {
+            throw new Error("Failed to fetch stats")
           }
         } catch (error) {
           console.error("Failed to fetch stats:", error)
+          toast({
+            title: "Erro ao buscar estatísticas",
+            description: "Não foi possível carregar suas estatísticas. Tente novamente mais tarde.",
+            variant: "destructive",
+          })
         }
       }
     }
@@ -56,7 +95,11 @@ export default function HomePage() {
     fetchStats()
   }, [session])
 
-  const updateStats = async (newStats: any) => {
+  /**
+   * Updates the user's stats in the database.
+   * @param newStats The new stats to be saved.
+   */
+  const updateStats = async (newStats: Stats) => {
     setStats(newStats)
     if (session?.user?.id) {
       try {
@@ -74,6 +117,11 @@ export default function HomePage() {
         })
       } catch (error) {
         console.error("Failed to update stats:", error)
+        toast({
+          title: "Erro ao atualizar estatísticas",
+          description: "Não foi possível salvar suas estatísticas. Tente novamente mais tarde.",
+          variant: "destructive",
+        })
       }
     }
   }
@@ -110,37 +158,7 @@ export default function HomePage() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <Link href="/content/upload">
-            <Card className="cursor-pointer hover:shadow-lg transition-all duration-300 border-2 border-dashed border-indigo-200 hover:border-indigo-400">
-              <CardContent className="p-6 text-center">
-                <Upload className="h-12 w-12 text-indigo-600 mx-auto mb-3" />
-                <h3 className="font-semibold text-lg mb-2">Upload Conteúdo</h3>
-                <p className="text-sm text-gray-600">PDFs, links, arquivos de texto</p>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link href="/quiz/ai-generator">
-            <Card className="cursor-pointer hover:shadow-lg transition-all duration-300 bg-gradient-to-br from-purple-50 to-indigo-50">
-              <CardContent className="p-6 text-center">
-                <Zap className="h-12 w-12 text-purple-600 mx-auto mb-3" />
-                <h3 className="font-semibold text-lg mb-2">Gerar Quiz IA</h3>
-                <p className="text-sm text-gray-600">Criação automática inteligente</p>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link href="/analytics/performance">
-            <Card className="cursor-pointer hover:shadow-lg transition-all duration-300 bg-gradient-to-br from-green-50 to-emerald-50">
-              <CardContent className="p-6 text-center">
-                <TrendingUp className="h-12 w-12 text-green-600 mx-auto mb-3" />
-                <h3 className="font-semibold text-lg mb-2">Análise IA</h3>
-                <p className="text-sm text-gray-600">Performance e recomendações</p>
-              </CardContent>
-            </Card>
-          </Link>
-        </div>
+        <QuickActions />
 
         {/* Stats Dashboard */}
         <StatsDashboard stats={stats} />
@@ -202,140 +220,19 @@ export default function HomePage() {
             </Card>
 
             {/* Recent Activity */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Atividade Recente</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {recentActivity.map((activity) => (
-                    <div key={activity.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div className="flex items-center gap-3">
-                        {activity.type === "content" ? (
-                          <FileText className="h-5 w-5 text-blue-600" />
-                        ) : (
-                          <Brain className="h-5 w-5 text-purple-600" />
-                        )}
-                        <div>
-                          <h4 className="font-medium">{activity.title}</h4>
-                          <p className="text-sm text-gray-600">
-                            {activity.type === "content"
-                              ? `${activity.questions} questões geradas`
-                              : `Score: ${activity.score}% - ${activity.mode}`}
-                          </p>
-                        </div>
-                      </div>
-                      <span className="text-xs text-gray-500">{activity.date}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            <RecentActivity activities={recentActivity} />
           </div>
 
           {/* Sidebar */}
           <div className="space-y-6">
             {/* AI Insights */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Brain className="h-5 w-5 text-purple-600" />
-                  Insights da IA
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {aiInsights.map((insight, index) => (
-                    <div key={index} className="p-3 bg-purple-50 rounded-lg">
-                      <p className="text-sm text-purple-800">{insight}</p>
-                    </div>
-                  ))}
-                </div>
-                <Link href="/analytics/ai-insights">
-                  <Button className="w-full mt-4 bg-transparent" variant="outline">
-                    Ver Todos os Insights
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
+            <AIInsights insights={aiInsights} />
 
             {/* Quick Stats */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Performance Semanal</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>Psicologia Cognitiva</span>
-                      <span>92%</span>
-                    </div>
-                    <Progress value={92} className="h-2" />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>Teorias da Personalidade</span>
-                      <span>76%</span>
-                    </div>
-                    <Progress value={76} className="h-2" />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>Psicopatologia</span>
-                      <span>84%</span>
-                    </div>
-                    <Progress value={84} className="h-2" />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>Neuropsicologia</span>
-                      <span>68%</span>
-                    </div>
-                    <Progress value={68} className="h-2" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <WeeklyPerformance performance={weeklyPerformance} />
 
             {/* Content Library */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Biblioteca de Conteúdo</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <Link href="/content/library">
-                    <Button variant="ghost" className="w-full justify-start text-sm">
-                      📚 Psicologia Cognitiva (5 docs)
-                    </Button>
-                  </Link>
-                  <Link href="/content/library">
-                    <Button variant="ghost" className="w-full justify-start text-sm">
-                      🧠 Neuropsicologia (3 docs)
-                    </Button>
-                  </Link>
-                  <Link href="/content/library">
-                    <Button variant="ghost" className="w-full justify-start text-sm">
-                      👥 Psicologia Social (4 docs)
-                    </Button>
-                  </Link>
-                  <Link href="/content/library">
-                    <Button variant="ghost" className="w-full justify-start text-sm">
-                      🔬 Métodos de Pesquisa (2 docs)
-                    </Button>
-                  </Link>
-                </div>
-                <Link href="/content/library">
-                  <Button className="w-full mt-4 bg-transparent" variant="outline">
-                    Ver Biblioteca Completa
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
+            <ContentLibrary items={contentLibrary} />
           </div>
         </div>
       </div>

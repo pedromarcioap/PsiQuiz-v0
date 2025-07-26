@@ -21,6 +21,8 @@ import { useStats } from "@/hooks/useStats"
 
 type ContentType = "pdf" | "text" | "url" | "web-search"
 type StatusType = "uploading" | "processing" | "completed" | "error"
+type Difficulty = "basic" | "intermediate" | "advanced" | "mixed"
+type DistractorQuality = "standard" | "high" | "expert"
 
 interface ContentItem {
   id: string
@@ -86,15 +88,19 @@ FORMATO:
   const [webSearchQuery, setWebSearchQuery] = useState("")
   const [urlInput, setUrlInput] = useState("")
   const [numQuestions, setNumQuestions] = useState("10")
-  const [difficulty, setDifficulty] = useState("mixed")
-  const [distractorQuality, setDistractorQuality] = useState("high")
+  const [difficulty, setDifficulty] = useState<Difficulty>("mixed")
+  const [distractorQuality, setDistractorQuality] = useState<DistractorQuality>("high")
 
   const { toast } = useToast()
   const { incrementContentsProcessed, incrementQuestionsGenerated } = useStats()
 
-  /* ------------------------------------------------------------------ */
-  /* 1️⃣  processContent – MUST be declared first for TDZ safety         */
-  /* ------------------------------------------------------------------ */
+  /**
+   * Processes the raw text of a content item, generates questions using the AI service,
+   * and creates a new quiz in the database.
+   * @param item The content item being processed.
+   * @param rawText The raw text of the content item.
+   * @param contentId The ID of the content item in the database.
+   */
   const processContent = useCallback(
     async (item: ContentItem, rawText: string, contentId: string) => {
       setContentItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "processing", progress: 0 } : i)))
@@ -149,9 +155,11 @@ FORMATO:
     ],
   )
 
-  /* ------------------------------------------------------------------ */
-  /* 2️⃣  helpers that DEPEND on processContent                          */
-  /* ------------------------------------------------------------------ */
+  /**
+   * Handles the file upload process. Creates a new content entry in the database
+   * and then processes the file content.
+   * @param files The files to be uploaded.
+   */
   const handleFileUpload = useCallback(
     async (files: FileList | null) => {
       if (!files) return
@@ -188,8 +196,8 @@ FORMATO:
           console.error("Error during file upload process:", error)
           setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
           toast({
-            title: "Erro ao processar arquivo",
-            description: "Não foi possível salvar a entrada de conteúdo.",
+            title: "Erro ao enviar arquivo",
+            description: "Não foi possível salvar o arquivo no sistema. Tente novamente.",
             variant: "destructive",
           })
         }
@@ -198,6 +206,10 @@ FORMATO:
     [processContent, toast],
   )
 
+  /**
+   * Handles the URL submission process. Creates a new content entry in the database,
+   * extracts the text from the URL, and then processes the content.
+   */
   const handleUrlSubmit = useCallback(async () => {
     if (!urlInput.trim()) return
     const item: ContentItem = {
@@ -234,14 +246,18 @@ FORMATO:
       console.error(err)
       setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
       toast({
-        title: "Erro na URL",
-        description: err?.message ?? "Falha ao extrair conteúdo.",
+        title: "Erro ao processar URL",
+        description: "Não foi possível extrair o conteúdo da URL. Verifique se a URL está correta e tente novamente.",
         variant: "destructive",
       })
     }
     setUrlInput("")
   }, [urlInput, processContent, toast])
 
+  /**
+   * Handles the web search process. Creates a new content entry in the database,
+   * performs a web search, and then processes the search results.
+   */
   const handleWebSearch = useCallback(async () => {
     if (!webSearchQuery.trim()) return
     const item: ContentItem = {
@@ -286,7 +302,7 @@ FORMATO:
       setContentItems((p) => p.map((i) => (i.id === item.id ? { ...i, status: "error" } : i)))
       toast({
         title: "Erro na busca",
-        description: err?.message ?? "Falha ao buscar conteúdo.",
+        description: "Não foi possível buscar o conteúdo da web. Tente novamente mais tarde.",
         variant: "destructive",
       })
     }
